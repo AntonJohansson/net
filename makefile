@@ -4,10 +4,10 @@ SERVER := $(BUILDDIR)/server
 
 all: $(BUILDDIR) $(SERVER) $(CLIENT)
 
-$(SERVER): src/server.c src/draw.c
+$(SERVER): src/server.c
 	$(CC) -o $@ $^ -g -O2 -lraylib -lm
 
-$(CLIENT): src/client.c src/draw.c
+$(CLIENT): src/client.c
 	$(CC) -o $@ $^ -g -O2 -lraylib -lm
 
 $(BUILDDIR):

@@ -1,0 +1,8 @@
+Client:
+    - [ ]
+
+Server:
+    - [ ] Check if we have some problem with packets staying around in some log
+
+Both:
+    - [ ] Handle clients leaving + (holes in the array)

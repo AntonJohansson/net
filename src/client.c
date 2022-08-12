@@ -2,21 +2,26 @@
 #include "enet.h"
 
 #include "packet.h"
-#include "draw.h"
 #include "common.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <math.h>
+#include <raylib.h>
+
+#define WIDTH 800
+#define HEIGHT 600
 
 #define FPS 60
 
 #define PACKET_LOG_SIZE 2048
 #define OUTPUT_BUFFER_SIZE 1024
 #define INPUT_BUFFER_LENGTH 16
+#define MAX_CLIENTS 32
+#define UPDATE_LOG_BUFFER_SIZE 512
 
-const u64 initial_server_tick_offset = 0;
+const u64 initial_server_tick_offset = 5;
 
 bool running = true;
 
@@ -27,14 +32,33 @@ void inthandler(int sig) {
 
 bool connected = false;
 
+struct update_log_buffer {
+    struct server_packet_peer_auth data[UPDATE_LOG_BUFFER_SIZE];
+    u64 bottom;
+    u64 used;
+};
+
+struct peer {
+    struct player player;
+    struct update_log_buffer update_log;
+};
+
+void client_handle_input(struct input *input) {
+    memset(input->active, INPUT_NULL, sizeof(input->active));
+    if (IsKeyDown(KEY_W))
+        input->active[INPUT_MOVE_UP] = true;
+    if (IsKeyDown(KEY_A))
+        input->active[INPUT_MOVE_LEFT] = true;
+    if (IsKeyDown(KEY_S))
+        input->active[INPUT_MOVE_DOWN] = true;
+    if (IsKeyDown(KEY_D))
+        input->active[INPUT_MOVE_RIGHT] = true;
+    if (IsKeyDown(KEY_Q))
+        input->active[INPUT_QUIT] = true;
+}
+
 int main() {
     signal(SIGINT, inthandler);
-
-    struct byte_buffer packet_log = {
-        .base = malloc(PACKET_LOG_SIZE),
-        .size = PACKET_LOG_SIZE,
-    };
-    packet_log.top = packet_log.base;
 
     struct byte_buffer output_buffer = {
         .base = malloc(OUTPUT_BUFFER_SIZE),
@@ -77,7 +101,7 @@ int main() {
         puts("Connection to some.server.net:1234 failed.");
     }
 
-    open_window();
+    InitWindow(WIDTH, HEIGHT, "client");
 
     struct timespec frame_start = {0},
                     frame_end   = {0},
@@ -88,43 +112,116 @@ int main() {
         .tv_nsec = NANOSECS_PER_SEC / FPS,
     };
 
-    u64 tick = 0;
-
     const f32 dt = time_nanoseconds(&frame_desired);
 
     u8 input_count = 0;
     struct input input_buffer[INPUT_BUFFER_LENGTH] = {0};
 
-    struct player player = {0};
+    struct peer peers[MAX_CLIENTS] = {0};
+    u8 num_peers = 0;
+    u8 main_peer_index;
 
-    u8 adjustment_ahead = 0;
-    u8 adjustment_behind = 0;
+    u64 tick = 0;
+    i8 adjustment = 0;
     u8 adjustment_iteration = 0;
+    i32 total_adjustment = 0;
 
     while (running) {
+        // Adjustment when ahead of server
+        if (adjustment < 0) {
+            nanosleep(&frame_desired, NULL);
+            // NOTE(anjo): I don't remember why this is here.
+            //             But it doesn't work without it.
+            if (++adjustment == 0)
+                tick++;
+            continue;
+        }
+
         // Begin frame
         time_current(&frame_start);
 
-        if (adjustment_ahead > 0) {
-            adjustment_ahead--;
-            //if (adjustment_ahead == 0)
-            //    adjustment_iteration = 0;
-            goto end_frame;
-        }
-
         printf("[ %llu ] --------------------------\n", tick);
-
-        packet_log.top = packet_log.base;
 
         // Fetch network data
         while (enet_host_service(client, &event, 0) > 0) {
             switch (event.type) {
             case ENET_EVENT_TYPE_RECEIVE: {
-                // Copy packets into our own buffer
-                // TODO: it would be nice if could just use the buffer that enet fetches it's
-                //       packeckts into, we're kinda wasting memory here.
-                append(&packet_log, event.packet->data, event.packet->dataLength);
-                enet_packet_destroy(event.packet);
+                // Packet header
+                char *p = event.packet->data;
+                struct server_header *header = (struct server_header *) p;
+                if (header->adjustment != 0 && adjustment_iteration == header->adjustment_iteration) {
+                    adjustment = header->adjustment;
+                    total_adjustment += adjustment;
+                    ++adjustment_iteration;
+                }
+                p += sizeof(struct server_header);
+
+                // Packet payload
+                switch (header->type) {
+                case SERVER_PACKET_GREETING: {
+                    struct server_packet_greeting *greeting = (struct server_packet_greeting *) p;
+                    p += sizeof(struct server_packet_greeting);
+
+                    tick = greeting->initial_tick + initial_server_tick_offset;
+                    main_peer_index = greeting->peer_index;
+                    peers[main_peer_index].player.x = greeting->initial_x;
+                    peers[main_peer_index].player.y = greeting->initial_y;
+                    ++num_peers;
+                    connected = true;
+                } break;
+                case SERVER_PACKET_PEER_GREETING: {
+                    struct server_packet_peer_greeting *greeting = (struct server_packet_peer_greeting *) p;
+                    p += sizeof(struct server_packet_peer_greeting);
+
+                    u8 peer_index = greeting->peer_index;
+                    peers[peer_index].player.x = greeting->initial_x;
+                    peers[peer_index].player.y = greeting->initial_y;
+                    ++num_peers;
+                } break;
+                case SERVER_PACKET_AUTH: {
+                    struct server_packet_auth *auth = (struct server_packet_auth *) p;
+                    p += sizeof(struct server_packet_auth);
+
+                    assert(auth->tick <= tick);
+                    u64 diff = tick - auth->tick - 1;
+                    assert(diff < INPUT_BUFFER_LENGTH);
+
+                    struct player *player = &peers[main_peer_index].player;
+
+                    printf("  Replaying %d inputs from %d+1 to %d-1\n", diff, auth->tick, tick);
+                    printf("    Starting from {%f, %f}\n", auth->x, auth->y);
+                    printf("    Should match {%f, %f}\n", player->x, player->y);
+
+                    // Gets the input for the tick after the tick we recieved auth data for
+                    struct player old_player = {
+                        .x = auth->x,
+                        .y = auth->y,
+                    };
+                    u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
+                    for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
+                        struct input *old_input = &input_buffer[old_index];
+                        move(&old_player, old_input, dt);
+                        printf("  replaying input -> {%f, %f}\n", old_player.x, old_player.y);
+                    }
+
+                    if (!f32_equal(player->x, old_player.x) && !f32_equal(player->y, old_player.y)) {
+                        printf("Server disagreed! {%f, %f} vs {%f, %f}\n", player->x, player->y, old_player.x, old_player.y);
+                        player->x = old_player.x;
+                        player->y = old_player.y;
+                    }
+                } break;
+                case SERVER_PACKET_PEER_AUTH: {
+                    struct server_packet_peer_auth *peer_auth = (struct server_packet_peer_auth *) p;
+                    p += sizeof(struct server_packet_peer_auth);
+
+                    const u8 peer_index = peer_auth->peer_index;
+                    assert(peer_index >= 0 && peer_index < num_peers);
+                    struct peer *peer = &peers[peer_index];
+                    CIRCULAR_BUFFER_APPEND(&peer->update_log, *peer_auth);
+                } break;
+                default:
+                    printf("Received unknown packet type\n");
+                }
             } break;
 
             case ENET_EVENT_TYPE_DISCONNECT:
@@ -138,90 +235,30 @@ int main() {
             case ENET_EVENT_TYPE_NONE:
                 break;
             }
+            enet_packet_destroy(event.packet);
         }
 
-        // Process packet queue
-        u8 *p = packet_log.base;
-        while (p < packet_log.top) {
-            struct server_header *header = (struct server_header *) p;
-
-            if (header->adjustment != 0 && adjustment_iteration == header->adjustment_iteration) {
-                printf("adjustment %d, %d, %d\n", header->adjustment, header->adjustment_iteration, adjustment_iteration);
-                if (header->adjustment < 0) {
-                    adjustment_ahead = -header->adjustment;
-                } else {
-                    adjustment_behind = header->adjustment;
-                }
-                ++adjustment_iteration;
+        u64 active_tick = tick + 2*total_adjustment;
+        for (u8 i = 0; i < num_peers; ++i) {
+            if (i == main_peer_index)
                 continue;
+            struct peer *peer = &peers[i];
+            if (peer->update_log.used > 0) {
+                struct server_packet_peer_auth *entry = &peer->update_log.data[peer->update_log.bottom];
+
+                if (active_tick < entry->tick)
+                    continue;
+
+                peer->player.x = entry->x;
+                peer->player.y = entry->y;
+
+                CIRCULAR_BUFFER_POP(&peer->update_log);
             }
-
-            p += sizeof(struct server_header);
-
-            switch (header->type) {
-            case SERVER_PACKET_GREETING: {
-                struct server_packet_greeting *greeting = (struct server_packet_greeting *) p;
-                p += sizeof(struct server_packet_greeting);
-
-                tick = greeting->initial_tick + initial_server_tick_offset;
-                player.x = greeting->initial_x;
-                player.y = greeting->initial_y;
-                connected = true;
-            } break;
-            case SERVER_PACKET_AUTH: {
-                struct server_packet_auth *auth = (struct server_packet_auth *) p;
-                p += sizeof(struct server_packet_auth);
-
-                assert(header->tick <= tick);
-                u64 diff = tick - header->tick - 1;
-                assert(diff < INPUT_BUFFER_LENGTH);
-
-                printf("  Replaying %d inputs from %d+1 to %d-1\n", diff, header->tick, tick);
-                printf("    Starting from {%f, %f}\n", auth->x, auth->y);
-                printf("    Should match {%f, %f}\n", player.x, player.y);
-
-                // Gets the input for the tick after the tick we recieved auth data for
-                struct player old_player = {
-                    .x = auth->x,
-                    .y = auth->y,
-                };
-                u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
-                for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
-                    struct input *old_input = &input_buffer[old_index];
-                    move(&old_player, old_input, dt);
-                    printf("  replaying input -> {%f, %f}\n", old_player.x, old_player.y);
-                }
-
-                if (!f32_equal(player.x, old_player.x) && !f32_equal(player.y, old_player.y)) {
-                    printf("Server disagreed! {%f, %f} vs {%f, %f}, Forcing pos tick %d vs %d!\n",
-                           player.x, player.y,
-                           old_player.x, old_player.y,
-                           header->tick, tick);
-                    printf("  -----------------\n");
-                    for (u8 i = (input_count + 1) % INPUT_BUFFER_LENGTH; i != input_count; i = (i + 1) % INPUT_BUFFER_LENGTH) {
-                        struct input *old_input = &input_buffer[i];
-                        printf("  L(%d) R(%d) U(%d) D(%d)",
-                               old_input->active[INPUT_MOVE_LEFT] == true,
-                               old_input->active[INPUT_MOVE_RIGHT] == true,
-                               old_input->active[INPUT_MOVE_UP] == true,
-                               old_input->active[INPUT_MOVE_DOWN] == true
-                               );
-                        if (i == (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH)
-                            printf(" <-- start");
-
-                        printf("\n");
-                    }
-                    printf("  -----------------\n");
-                    player.x = old_player.x;
-                    player.y = old_player.y;
-                }
-            } break;
-            default:
-                printf("Received unknown packet type\n");
-            }
-
         }
 
+        //
+        // Handle input + append to circular buffer
+        //
         struct input *input = &input_buffer[input_count];
         input_count = (input_count + 1) % INPUT_BUFFER_LENGTH;
         client_handle_input(input);
@@ -229,6 +266,9 @@ int main() {
         if (input->active[INPUT_QUIT])
             running = false;
 
+        //
+        // Do game update and send to server
+        //
         if (connected) {
             struct client_header header = {
                 .type = CLIENT_PACKET_UPDATE,
@@ -248,17 +288,34 @@ int main() {
             ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
             enet_peer_send(peer, 0, packet);
 
-            // Predictive move
-            move(&player, input, dt);
+            struct player *player = &peers[main_peer_index].player;
 
-            printf("%f, %f\n", player.x, player.y);
+            // Predictive move
+            move(player, input, dt);
         }
 
-        draw("client", &player);
+        // Render
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+        if (connected) {
+            DrawText("client", 10, 10, 20, BLACK);
+            struct player *player = &peers[main_peer_index].player;
+            DrawCircle(player->x, player->y, 10.0f, GREEN);
+            for (u8 i = 0; i < num_peers; ++i) {
+                if (i == main_peer_index)
+                    continue;
+                DrawCircle(peers[i].player.x, peers[i].player.y, 10.0f, RED);
+            }
+        }
+        EndDrawing();
 
         // End frame
-end_frame:
-        if (adjustment_behind == 0) {
+        if (adjustment > 0) {
+            // Adjustment when behind of server
+            // we want to process frames as fast as possible,
+            // so no sleeping.
+            --adjustment;
+        } else {
             // Only sleep remaining frame time if we aren't fast forwarding
             time_current(&frame_end);
             time_subtract(&frame_delta, &frame_end, &frame_start);
@@ -267,13 +324,8 @@ end_frame:
                 nanosleep(&frame_delta, NULL);
             }
         }
-        if (adjustment_behind > 0) {
-            adjustment_behind--;
-            //if (adjustment_behind == 0)
-            //    adjustment_iteration = 0;
-        }
-        if (adjustment_ahead == 0)
-            tick++;
+
+        tick++;
     }
 
     // Disconnect
@@ -297,6 +349,6 @@ end_frame:
 
     enet_host_destroy(client);
     enet_deinitialize();
-    close_window();
+    CloseWindow();
     return 0;
 }

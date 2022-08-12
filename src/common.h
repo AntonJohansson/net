@@ -6,6 +6,8 @@
 #include <assert.h>
 #include <string.h>
 
+#include <stdio.h>
+
 typedef int8_t   i8;
 typedef uint8_t  u8;
 typedef int16_t  i16;
@@ -45,9 +47,13 @@ static inline void time_current(struct timespec *t) {
 
 static inline void time_subtract(struct timespec *res, struct timespec *a, struct timespec *b) {
     assert(a->tv_sec >= b->tv_sec);
-    assert(a->tv_nsec >= b->tv_nsec);
-    res->tv_sec = a->tv_sec - b->tv_sec;
-    res->tv_nsec = a->tv_nsec - b->tv_nsec;
+    if (a->tv_nsec >= b->tv_nsec) {
+        res->tv_sec = a->tv_sec - b->tv_sec;
+        res->tv_nsec = a->tv_nsec - b->tv_nsec;
+    } else {
+        res->tv_sec = a->tv_sec - b->tv_sec - 1;
+        res->tv_nsec = NANOSECS_PER_SEC - (b->tv_nsec - a->tv_nsec);
+    }
 }
 
 static inline u64 time_nanoseconds(struct timespec *t) {
