@@ -18,7 +18,7 @@
 #define PACKET_LOG_SIZE 2048
 #define OUTPUT_BUFFER_SIZE 1024
 #define INPUT_BUFFER_LENGTH 16
-#define MAX_CLIENTS 32
+#define MAX_CLIENTS 4
 #define UPDATE_LOG_BUFFER_SIZE 512
 
 const u64 initial_server_tick_offset = 5;
@@ -39,9 +39,14 @@ struct update_log_buffer {
 };
 
 struct peer {
+    bool connected;
     struct player player;
     struct update_log_buffer update_log;
 };
+
+static inline void peer_disconnect(struct peer *p) {
+    memset(p, 0, sizeof(struct peer));
+}
 
 void client_handle_input(struct input *input) {
     memset(input->active, INPUT_NULL, sizeof(input->active));
@@ -140,8 +145,6 @@ int main() {
         // Begin frame
         time_current(&frame_start);
 
-        printf("[ %llu ] --------------------------\n", tick);
-
         // Fetch network data
         while (enet_host_service(client, &event, 0) > 0) {
             switch (event.type) {
@@ -164,6 +167,8 @@ int main() {
 
                     tick = greeting->initial_tick + initial_server_tick_offset;
                     main_peer_index = greeting->peer_index;
+                    assert(!peers[main_peer_index].connected);
+                    peers[main_peer_index].connected = true;
                     peers[main_peer_index].player.x = greeting->initial_x;
                     peers[main_peer_index].player.y = greeting->initial_y;
                     ++num_peers;
@@ -188,9 +193,6 @@ int main() {
 
                     struct player *player = &peers[main_peer_index].player;
 
-                    printf("  Replaying %d inputs from %d+1 to %d-1\n", diff, auth->tick, tick);
-                    printf("    Starting from {%f, %f}\n", auth->x, auth->y);
-                    printf("    Should match {%f, %f}\n", player->x, player->y);
 
                     // Gets the input for the tick after the tick we recieved auth data for
                     struct player old_player = {
@@ -201,11 +203,27 @@ int main() {
                     for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
                         struct input *old_input = &input_buffer[old_index];
                         move(&old_player, old_input, dt);
-                        printf("  replaying input -> {%f, %f}\n", old_player.x, old_player.y);
                     }
 
                     if (!f32_equal(player->x, old_player.x) && !f32_equal(player->y, old_player.y)) {
-                        printf("Server disagreed! {%f, %f} vs {%f, %f}\n", player->x, player->y, old_player.x, old_player.y);
+                        {
+                            printf("  Replaying %d inputs from %d+1 to %d-1\n", diff, auth->tick, tick);
+                            printf("    Starting from {%f, %f}\n", auth->x, auth->y);
+                            printf("    Should match {%f, %f}\n", player->x, player->y);
+
+                            struct player tmp_player = {
+                                .x = auth->x,
+                                .y = auth->y,
+                            };
+                            u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
+                            for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
+                                struct input *old_input = &input_buffer[old_index];
+                                move(&tmp_player, old_input, dt);
+                                printf("    -> {%f, %f}\n", tmp_player.x, tmp_player.y);
+                            }
+                        }
+
+                        printf("  Server disagreed! {%f, %f} vs {%f, %f}\n", player->x, player->y, old_player.x, old_player.y);
                         player->x = old_player.x;
                         player->y = old_player.y;
                     }
@@ -218,6 +236,14 @@ int main() {
                     assert(peer_index >= 0 && peer_index < num_peers);
                     struct peer *peer = &peers[peer_index];
                     CIRCULAR_BUFFER_APPEND(&peer->update_log, *peer_auth);
+                } break;
+                case SERVER_PACKET_PEER_DISCONNECTED: {
+                    struct server_packet_peer_disconnected *disc = (struct server_packet_peer_disconnected *) p;
+                    p += sizeof(struct server_packet_peer_disconnected);
+
+                    printf("%d disconnected!\n", disc->peer_index);
+                    peer_disconnect(&peers[disc->peer_index]);
+                    --num_peers;
                 } break;
                 default:
                     printf("Received unknown packet type\n");
@@ -328,9 +354,11 @@ int main() {
         tick++;
     }
 
+    enet_peer_disconnect(peer, 0);
+
     // Disconnect
     bool disconnected = false;
-    while (enet_host_service(client, &event, 100) > 0) {
+    while (enet_host_service(client, &event, 1000) > 0) {
         switch (event.type) {
         case ENET_EVENT_TYPE_RECEIVE:
             enet_packet_destroy(event.packet);

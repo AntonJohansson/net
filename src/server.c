@@ -15,7 +15,7 @@
 
 #define FPS 60
 
-#define MAX_CLIENTS 32
+#define MAX_CLIENTS 4
 
 #define PACKET_LOG_SIZE 2048
 #define OUTPUT_BUFFER_SIZE 1024
@@ -52,10 +52,15 @@ struct update_log_buffer {
 };
 
 struct peer {
+    bool connected;
     struct player player;
     struct update_log_buffer update_log;
     ENetPeer *enet_peer;
 };
+
+static inline void peer_disconnect(struct peer *p) {
+    memset(p, 0, sizeof(struct peer));
+}
 
 int main() {
     signal(SIGINT, inthandler);
@@ -113,10 +118,15 @@ int main() {
                 printf("A new client connected from %x:%u.\n",  event.peer->address.host, event.peer->address.port);
 
                 assert(num_peers < MAX_CLIENTS);
-                u8 peer_index = num_peers++;
+                u8 peer_index = 0;
+                for (; peer_index < MAX_CLIENTS; ++peer_index)
+                    if (!peers[peer_index].connected)
+                        break;
+                ++num_peers;
                 event.peer->data = malloc(sizeof(u8));
                 *(u8 *)event.peer->data = peer_index;
 
+                peers[peer_index].connected = true;
                 peers[peer_index].player.x = 400.0f;
                 peers[peer_index].player.y = 300.0f;
                 peers[peer_index].enet_peer = event.peer;
@@ -159,8 +169,8 @@ int main() {
                     APPEND(&output_buffer, &greeting);
 
                     ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-                    for (u8 i = 0; i < num_peers; ++i) {
-                        if (i == peer_index)
+                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                        if (!peers[i].connected || i == peer_index)
                             continue;
                         enet_peer_send(peers[i].enet_peer, 0, packet);
                     }
@@ -172,8 +182,8 @@ int main() {
                         .type = SERVER_PACKET_PEER_GREETING,
                     };
 
-                    for (u8 i = 0; i < num_peers; ++i) {
-                        if (i == peer_index)
+                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                        if (!peers[i].connected || i == peer_index)
                             continue;
                         struct server_packet_peer_greeting greeting = {
                             .initial_x = peers[i].player.x,
@@ -215,12 +225,10 @@ int main() {
 
                         if (diff < -(VALID_TICK_WINDOW-1)) {
                             printf("Allowing packet, too late: tick %llu, should be >= %llu\n", header->tick, tick);
-                        } else {
-                            printf("Allowing packet, tick %llu, %llu\n", header->tick, tick);
                         }
 
                         const u8 peer_index = *(u8 *)event.peer->data;
-                        assert(peer_index >= 0 && peer_index < num_peers);
+                        assert(peer_index >= 0 && peer_index < MAX_CLIENTS);
                         struct peer *peer = &peers[peer_index];
                         struct update_log_entry entry = {
                             .client_tick = header->tick,
@@ -252,17 +260,69 @@ int main() {
                 }
             } break;
 
-            case ENET_EVENT_TYPE_DISCONNECT:
-                printf("%d disconnected.\n", event.peer->data);
-                free(event.peer->data);
-                event.peer->data = NULL;
-                break;
+            case ENET_EVENT_TYPE_DISCONNECT: {
+                u8 peer_index = *(u8 *) event.peer->data;
+                struct peer *p = &peers[peer_index];
+                printf("%d disconnected.\n", peer_index);
 
-            case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
-                printf("%d disconnected due to timeout.\n", event.peer->data);
+                {
+                    struct server_header response_header = {
+                        .type = SERVER_PACKET_PEER_DISCONNECTED,
+                    };
+
+                    struct server_packet_peer_disconnected disc = {
+                        .peer_index = peer_index,
+                    };
+
+                    output_buffer.top = output_buffer.base;
+                    APPEND(&output_buffer, &response_header);
+                    APPEND(&output_buffer, &disc);
+                    ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
+
+                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                        if (!peers[i].connected || i == peer_index)
+                            continue;
+                        enet_peer_send(peers[i].enet_peer, 0, packet);
+                    }
+                }
+
+                peer_disconnect(p);
+                --num_peers;
                 free(event.peer->data);
                 event.peer->data = NULL;
-                break;
+            } break;
+
+            case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: {
+                u8 peer_index = *(u8 *) event.peer->data;
+                struct peer *p = &peers[peer_index];
+                printf("%d disconnected due to timeout.\n", peer_index);
+
+                {
+                    struct server_header response_header = {
+                        .type = SERVER_PACKET_PEER_DISCONNECTED,
+                    };
+
+                    struct server_packet_peer_disconnected disc = {
+                        .peer_index = peer_index,
+                    };
+
+                    output_buffer.top = output_buffer.base;
+                    APPEND(&output_buffer, &response_header);
+                    APPEND(&output_buffer, &disc);
+                    ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
+
+                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                        if (!peers[i].connected || i == peer_index)
+                            continue;
+                        enet_peer_send(peers[i].enet_peer, 0, packet);
+                    }
+                }
+
+                peer_disconnect(p);
+                --num_peers;
+                free(event.peer->data);
+                event.peer->data = NULL;
+            } break;
 
             case ENET_EVENT_TYPE_NONE:
                 break;
@@ -270,11 +330,13 @@ int main() {
             enet_packet_destroy(event.packet);
         }
 
-        for (u8 i = 0; i < num_peers; ++i) {
+        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+            if (!peers[i].connected)
+                continue;
             struct peer *peer = &peers[i];
             if (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
-                if (entry->client_tick == tick) {
+                if (entry->client_tick <= tick) {
                     move(&peer->player, &entry->input_update.input, dt);
 
                     // Send AUTH packet to peer
@@ -317,8 +379,8 @@ int main() {
                         APPEND(&output_buffer, &peer_auth);
                         ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
 
-                        for (u8 j = 0; j < num_peers; ++j) {
-                            if (i == j)
+                        for (u8 j = 0; j < MAX_CLIENTS; ++j) {
+                            if (!peers[j].connected || i == j)
                                 continue;
                             enet_peer_send(peers[j].enet_peer, 0, packet);
                         }
@@ -332,7 +394,9 @@ int main() {
         BeginDrawing();
         ClearBackground(RAYWHITE);
         DrawText("server", 10, 10, 20, BLACK);
-        for (u8 i = 0; i < num_peers; ++i) {
+        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+            if (!peers[i].connected)
+                continue;
             DrawCircle(peers[i].player.x, peers[i].player.y, 10.0f, RED);
         }
         EndDrawing();

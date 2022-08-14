@@ -9,6 +9,7 @@ enum server_packet_type {
     SERVER_PACKET_DROPPED,
     SERVER_PACKET_AUTH,
     SERVER_PACKET_PEER_AUTH,
+    SERVER_PACKET_PEER_DISCONNECTED,
 };
 
 enum client_packet_type {
@@ -50,6 +51,10 @@ struct server_packet_peer_auth {
     u64 tick;
     f32 x;
     f32 y;
+    u8 peer_index;
+};
+
+struct server_packet_peer_disconnected {
     u8 peer_index;
 };
 
