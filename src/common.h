@@ -19,6 +19,10 @@ typedef uint64_t u64;
 typedef float    f32;
 typedef double   f64;
 
+#define MAX_CLIENTS 4
+#define FPS 60
+#define NET_PER_SIM_TICKS 2
+
 #define ARRLEN(arr) (sizeof(arr)/sizeof(arr[0]))
 
 //
@@ -99,5 +103,14 @@ struct byte_buffer {
 static inline void append(struct byte_buffer *buffer, void *data, size_t size) {
     assert(buffer->top + size <= buffer->base + buffer->size);
     memcpy(buffer->top, data, size);
+    buffer->top += size;
+}
+
+#define POP(buffer, data) \
+    pop(buffer, (void **) data, sizeof(**data))
+
+static inline void pop(struct byte_buffer *buffer, void **data, size_t size) {
+    assert(buffer->top + size <= buffer->base + buffer->size);
+    *data = buffer->top;
     buffer->top += size;
 }

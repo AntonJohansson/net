@@ -13,15 +13,12 @@
 #define WIDTH 800
 #define HEIGHT 600
 
-#define FPS 60
-
 #define PACKET_LOG_SIZE 2048
-#define OUTPUT_BUFFER_SIZE 1024
-#define INPUT_BUFFER_LENGTH 16
-#define MAX_CLIENTS 4
+#define OUTPUT_BUFFER_SIZE 2048
+#define INPUT_BUFFER_LENGTH 512
 #define UPDATE_LOG_BUFFER_SIZE 512
 
-const u64 initial_server_tick_offset = 5;
+const u64 initial_server_net_tick_offset = 5;
 
 bool running = true;
 
@@ -48,6 +45,12 @@ static inline void peer_disconnect(struct peer *p) {
     memset(p, 0, sizeof(struct peer));
 }
 
+static inline void new_packet(struct byte_buffer *output_buffer) {
+    struct client_batch_header *batch = (void *) output_buffer->base;
+    assert(batch->num_packets < UINT16_MAX);
+    ++batch->num_packets;
+}
+
 void client_handle_input(struct input *input) {
     memset(input->active, INPUT_NULL, sizeof(input->active));
     if (IsKeyDown(KEY_W))
@@ -70,6 +73,11 @@ int main() {
         .size = OUTPUT_BUFFER_SIZE,
     };
     output_buffer.top = output_buffer.base;
+
+    {
+        struct client_batch_header batch = {0};
+        APPEND(&output_buffer, &batch);
+    }
 
     if (enet_initialize() != 0) {
         fprintf(stderr, "An error occurred while initializing ENet.\n");
@@ -126,145 +134,158 @@ int main() {
     u8 num_peers = 0;
     u8 main_peer_index;
 
-    u64 tick = 0;
+    u64 sim_tick = 0;
+    u64 net_tick = 0;
     i8 adjustment = 0;
     u8 adjustment_iteration = 0;
     i32 total_adjustment = 0;
 
     while (running) {
-        // Adjustment when ahead of server
-        if (adjustment < 0) {
-            nanosleep(&frame_desired, NULL);
-            // NOTE(anjo): I don't remember why this is here.
-            //             But it doesn't work without it.
-            if (++adjustment == 0)
-                tick++;
-            continue;
-        }
-
         // Begin frame
         time_current(&frame_start);
 
-        // Fetch network data
-        while (enet_host_service(client, &event, 0) > 0) {
-            switch (event.type) {
-            case ENET_EVENT_TYPE_RECEIVE: {
-                // Packet header
-                char *p = event.packet->data;
-                struct server_header *header = (struct server_header *) p;
-                if (header->adjustment != 0 && adjustment_iteration == header->adjustment_iteration) {
-                    adjustment = header->adjustment;
-                    total_adjustment += adjustment;
-                    ++adjustment_iteration;
+        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+            // Adjustment when ahead of server
+            if (adjustment < 0) {
+                for (u32 i = 0; i < NET_PER_SIM_TICKS; ++i)
+                    nanosleep(&frame_desired, NULL);
+                // NOTE(anjo): I don't remember why this is here.
+                //             But it doesn't work without it.
+                if (++adjustment == 0) {
+                    net_tick++;
+                    sim_tick += NET_PER_SIM_TICKS;
                 }
-                p += sizeof(struct server_header);
+                continue;
+            }
 
-                // Packet payload
-                switch (header->type) {
-                case SERVER_PACKET_GREETING: {
-                    struct server_packet_greeting *greeting = (struct server_packet_greeting *) p;
-                    p += sizeof(struct server_packet_greeting);
+            // Fetch network data
+            while (enet_host_service(client, &event, 0) > 0) {
+                switch (event.type) {
+                case ENET_EVENT_TYPE_RECEIVE: {
+                    // Packet batch header
+                    char *p = event.packet->data;
+                    struct server_batch_header *batch = (struct server_batch_header *) p;
+                    p += sizeof(struct server_batch_header);
 
-                    tick = greeting->initial_tick + initial_server_tick_offset;
-                    main_peer_index = greeting->peer_index;
-                    assert(!peers[main_peer_index].connected);
-                    peers[main_peer_index].connected = true;
-                    peers[main_peer_index].player.x = greeting->initial_x;
-                    peers[main_peer_index].player.y = greeting->initial_y;
-                    ++num_peers;
-                    connected = true;
-                } break;
-                case SERVER_PACKET_PEER_GREETING: {
-                    struct server_packet_peer_greeting *greeting = (struct server_packet_peer_greeting *) p;
-                    p += sizeof(struct server_packet_peer_greeting);
-
-                    u8 peer_index = greeting->peer_index;
-                    peers[peer_index].player.x = greeting->initial_x;
-                    peers[peer_index].player.y = greeting->initial_y;
-                    ++num_peers;
-                } break;
-                case SERVER_PACKET_AUTH: {
-                    struct server_packet_auth *auth = (struct server_packet_auth *) p;
-                    p += sizeof(struct server_packet_auth);
-
-                    assert(auth->tick <= tick);
-                    u64 diff = tick - auth->tick - 1;
-                    assert(diff < INPUT_BUFFER_LENGTH);
-
-                    struct player *player = &peers[main_peer_index].player;
-
-
-                    // Gets the input for the tick after the tick we recieved auth data for
-                    struct player old_player = {
-                        .x = auth->x,
-                        .y = auth->y,
-                    };
-                    u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
-                    for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
-                        struct input *old_input = &input_buffer[old_index];
-                        move(&old_player, old_input, dt);
+                    if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
+                        adjustment = batch->adjustment;
+                        total_adjustment += adjustment;
+                        ++adjustment_iteration;
                     }
 
-                    if (!f32_equal(player->x, old_player.x) && !f32_equal(player->y, old_player.y)) {
-                        {
-                            printf("  Replaying %d inputs from %d+1 to %d-1\n", diff, auth->tick, tick);
-                            printf("    Starting from {%f, %f}\n", auth->x, auth->y);
-                            printf("    Should match {%f, %f}\n", player->x, player->y);
+                    for (u16 packet = 0; packet < batch->num_packets; ++packet) {
+                        struct server_header *header = (struct server_header *) p;
+                        p += sizeof(struct server_header);
 
-                            struct player tmp_player = {
+                        // Packet payload
+                        switch (header->type) {
+                        case SERVER_PACKET_GREETING: {
+                            struct server_packet_greeting *greeting = (struct server_packet_greeting *) p;
+                            p += sizeof(struct server_packet_greeting);
+
+                            net_tick = greeting->initial_net_tick + initial_server_net_tick_offset;
+                            sim_tick = net_tick * NET_PER_SIM_TICKS;
+                            main_peer_index = greeting->peer_index;
+                            assert(!peers[main_peer_index].connected);
+                            peers[main_peer_index].connected = true;
+                            peers[main_peer_index].player.x = greeting->initial_x;
+                            peers[main_peer_index].player.y = greeting->initial_y;
+                            ++num_peers;
+                            connected = true;
+                        } break;
+                        case SERVER_PACKET_PEER_GREETING: {
+                            struct server_packet_peer_greeting *greeting = (struct server_packet_peer_greeting *) p;
+                            p += sizeof(struct server_packet_peer_greeting);
+
+                            u8 peer_index = greeting->peer_index;
+                            peers[peer_index].player.x = greeting->initial_x;
+                            peers[peer_index].player.y = greeting->initial_y;
+                            ++num_peers;
+                        } break;
+                        case SERVER_PACKET_AUTH: {
+                            struct server_packet_auth *auth = (struct server_packet_auth *) p;
+                            p += sizeof(struct server_packet_auth);
+
+                            assert(auth->sim_tick <= sim_tick);
+                            u64 diff = sim_tick - auth->sim_tick - 1;
+                            assert(diff < INPUT_BUFFER_LENGTH);
+
+                            struct player *player = &peers[main_peer_index].player;
+
+
+                            // Gets the input for the sim_tick after the sim_tick we recieved auth data for
+                            struct player old_player = {
                                 .x = auth->x,
                                 .y = auth->y,
                             };
                             u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
                             for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
                                 struct input *old_input = &input_buffer[old_index];
-                                move(&tmp_player, old_input, dt);
-                                printf("    -> {%f, %f}\n", tmp_player.x, tmp_player.y);
+                                move(&old_player, old_input, dt);
                             }
-                        }
 
-                        printf("  Server disagreed! {%f, %f} vs {%f, %f}\n", player->x, player->y, old_player.x, old_player.y);
-                        player->x = old_player.x;
-                        player->y = old_player.y;
+                            if (!f32_equal(player->x, old_player.x) && !f32_equal(player->y, old_player.y)) {
+                                {
+                                    printf("  Replaying %d inputs from %d+1 to %d-1\n", diff, auth->sim_tick, sim_tick);
+                                    printf("    Starting from {%f, %f}\n", auth->x, auth->y);
+                                    printf("    Should match {%f, %f}\n", player->x, player->y);
+
+                                    struct player tmp_player = {
+                                        .x = auth->x,
+                                        .y = auth->y,
+                                    };
+                                    u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
+                                    for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
+                                        struct input *old_input = &input_buffer[old_index];
+                                        move(&tmp_player, old_input, dt);
+                                        printf("    -> {%f, %f}\n", tmp_player.x, tmp_player.y);
+                                    }
+                                }
+
+                                printf("  Server disagreed! {%f, %f} vs {%f, %f}\n", player->x, player->y, old_player.x, old_player.y);
+                                player->x = old_player.x;
+                                player->y = old_player.y;
+                            }
+                        } break;
+                        case SERVER_PACKET_PEER_AUTH: {
+                            struct server_packet_peer_auth *peer_auth = (struct server_packet_peer_auth *) p;
+                            p += sizeof(struct server_packet_peer_auth);
+
+                            const u8 peer_index = peer_auth->peer_index;
+                            assert(peer_index >= 0 && peer_index < num_peers);
+                            struct peer *peer = &peers[peer_index];
+                            CIRCULAR_BUFFER_APPEND(&peer->update_log, *peer_auth);
+                        } break;
+                        case SERVER_PACKET_PEER_DISCONNECTED: {
+                            struct server_packet_peer_disconnected *disc = (struct server_packet_peer_disconnected *) p;
+                            p += sizeof(struct server_packet_peer_disconnected);
+
+                            printf("%d disconnected!\n", disc->peer_index);
+                            peer_disconnect(&peers[disc->peer_index]);
+                            --num_peers;
+                        } break;
+                        default:
+                            printf("Received unknown packet type %d\n", header->type);
+                        }
                     }
                 } break;
-                case SERVER_PACKET_PEER_AUTH: {
-                    struct server_packet_peer_auth *peer_auth = (struct server_packet_peer_auth *) p;
-                    p += sizeof(struct server_packet_peer_auth);
 
-                    const u8 peer_index = peer_auth->peer_index;
-                    assert(peer_index >= 0 && peer_index < num_peers);
-                    struct peer *peer = &peers[peer_index];
-                    CIRCULAR_BUFFER_APPEND(&peer->update_log, *peer_auth);
-                } break;
-                case SERVER_PACKET_PEER_DISCONNECTED: {
-                    struct server_packet_peer_disconnected *disc = (struct server_packet_peer_disconnected *) p;
-                    p += sizeof(struct server_packet_peer_disconnected);
+                case ENET_EVENT_TYPE_DISCONNECT:
+                    printf("Server disconnected\n");
+                    break;
 
-                    printf("%d disconnected!\n", disc->peer_index);
-                    peer_disconnect(&peers[disc->peer_index]);
-                    --num_peers;
-                } break;
-                default:
-                    printf("Received unknown packet type\n");
+                case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
+                    printf("Server timeout\n");
+                    break;
+
+                case ENET_EVENT_TYPE_NONE:
+                    break;
                 }
-            } break;
-
-            case ENET_EVENT_TYPE_DISCONNECT:
-                printf("Server disconnected\n");
-                break;
-
-            case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
-                printf("Server timeout\n");
-                break;
-
-            case ENET_EVENT_TYPE_NONE:
-                break;
+                enet_packet_destroy(event.packet);
             }
-            enet_packet_destroy(event.packet);
         }
 
-        u64 active_tick = tick + 2*total_adjustment;
+        u64 active_tick = sim_tick + 2*total_adjustment;
         for (u8 i = 0; i < num_peers; ++i) {
             if (i == main_peer_index)
                 continue;
@@ -272,7 +293,7 @@ int main() {
             if (peer->update_log.used > 0) {
                 struct server_packet_peer_auth *entry = &peer->update_log.data[peer->update_log.bottom];
 
-                if (active_tick < entry->tick)
+                if (active_tick < entry->sim_tick)
                     continue;
 
                 peer->player.x = entry->x;
@@ -298,26 +319,38 @@ int main() {
         if (connected) {
             struct client_header header = {
                 .type = CLIENT_PACKET_UPDATE,
-                .tick = tick,
-                .adjustment_iteration = adjustment_iteration,
+                .sim_tick = sim_tick,
             };
 
             struct client_packet_update update = {
                 .input = *input,
             };
 
-            output_buffer.top = output_buffer.base;
+            new_packet(&output_buffer);
             APPEND(&output_buffer, &header);
             APPEND(&output_buffer, &update);
-
-            // Send input
-            ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-            enet_peer_send(peer, 0, packet);
 
             struct player *player = &peers[main_peer_index].player;
 
             // Predictive move
             move(player, input, dt);
+        }
+
+        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+            const size_t size = (intptr_t) output_buffer.top - (intptr_t) output_buffer.base;
+            if (size > sizeof(struct client_batch_header)) {
+                struct client_batch_header *batch = (void *) output_buffer.base;
+                batch->net_tick = net_tick;
+                batch->adjustment_iteration = adjustment_iteration;
+                ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
+                enet_peer_send(peer, 0, packet);
+                output_buffer.top = output_buffer.base;
+
+                {
+                    struct client_batch_header batch = {0};
+                    APPEND(&output_buffer, &batch);
+                }
+            }
         }
 
         // Render
@@ -341,6 +374,7 @@ int main() {
             // we want to process frames as fast as possible,
             // so no sleeping.
             --adjustment;
+            // TODO(anjo): Doesn't work for net_tick
         } else {
             // Only sleep remaining frame time if we aren't fast forwarding
             time_current(&frame_end);
@@ -351,7 +385,9 @@ int main() {
             }
         }
 
-        tick++;
+        if (sim_tick % NET_PER_SIM_TICKS == 0)
+            net_tick++;
+        sim_tick++;
     }
 
     enet_peer_disconnect(peer, 0);

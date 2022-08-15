@@ -13,10 +13,6 @@
 #define WIDTH 800
 #define HEIGHT 600
 
-#define FPS 60
-
-#define MAX_CLIENTS 4
-
 #define PACKET_LOG_SIZE 2048
 #define OUTPUT_BUFFER_SIZE 1024
 #define INPUT_BUFFER_LENGTH 16
@@ -38,10 +34,8 @@ void inthandler(int sig) {
 }
 
 struct update_log_entry {
-    u64 client_tick;
-    u64 server_tick;
-    i8 adjustment;
-    u8 adjustment_iteration;
+    u64 client_sim_tick;
+    u64 server_net_tick;
     struct client_packet_update input_update;
 };
 
@@ -55,6 +49,7 @@ struct peer {
     bool connected;
     struct player player;
     struct update_log_buffer update_log;
+    struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
 };
 
@@ -62,14 +57,14 @@ static inline void peer_disconnect(struct peer *p) {
     memset(p, 0, sizeof(struct peer));
 }
 
+static inline void new_packet(struct peer *p) {
+    struct server_batch_header *batch = (void *) p->output_buffer.base;
+    assert(batch->num_packets < UINT16_MAX);
+    ++batch->num_packets;
+}
+
 int main() {
     signal(SIGINT, inthandler);
-
-    struct byte_buffer output_buffer = {
-        .base = malloc(OUTPUT_BUFFER_SIZE),
-        .size = OUTPUT_BUFFER_SIZE,
-    };
-    output_buffer.top = output_buffer.base;
 
     if (enet_initialize() != 0) {
         printf("An error occurred while initializing ENet.\n");
@@ -100,7 +95,8 @@ int main() {
         .tv_nsec = NANOSECS_PER_SEC / FPS,
     };
 
-    u64 tick = 0;
+    u64 sim_tick = 0;
+    u64 net_tick = 0;
     const f32 dt = time_nanoseconds(&frame_desired);
 
     struct peer peers[MAX_CLIENTS] = {0};
@@ -112,106 +108,112 @@ int main() {
         time_current(&frame_start);
 
         // Handle network
-        while (enet_host_service(server, &event, 0) > 0) {
-            switch (event.type) {
-            case ENET_EVENT_TYPE_CONNECT: {
-                printf("A new client connected from %x:%u.\n",  event.peer->address.host, event.peer->address.port);
+        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+            while (enet_host_service(server, &event, 0) > 0) {
+                switch (event.type) {
+                case ENET_EVENT_TYPE_CONNECT: {
+                    printf("A new client connected from %x:%u.\n",  event.peer->address.host, event.peer->address.port);
 
-                assert(num_peers < MAX_CLIENTS);
-                u8 peer_index = 0;
-                for (; peer_index < MAX_CLIENTS; ++peer_index)
-                    if (!peers[peer_index].connected)
-                        break;
-                ++num_peers;
-                event.peer->data = malloc(sizeof(u8));
-                *(u8 *)event.peer->data = peer_index;
+                    assert(num_peers < MAX_CLIENTS);
+                    u8 peer_index = 0;
+                    for (; peer_index < MAX_CLIENTS; ++peer_index)
+                        if (!peers[peer_index].connected)
+                            break;
+                    ++num_peers;
+                    event.peer->data = malloc(sizeof(u8));
+                    *(u8 *)event.peer->data = peer_index;
 
-                peers[peer_index].connected = true;
-                peers[peer_index].player.x = 400.0f;
-                peers[peer_index].player.y = 300.0f;
-                peers[peer_index].enet_peer = event.peer;
+                    peers[peer_index].connected = true;
+                    peers[peer_index].player.x = 400.0f;
+                    peers[peer_index].player.y = 300.0f;
+                    peers[peer_index].enet_peer = event.peer;
+                    peers[peer_index].output_buffer.base = malloc(OUTPUT_BUFFER_SIZE);
+                    peers[peer_index].output_buffer.size = OUTPUT_BUFFER_SIZE;
+                    peers[peer_index].output_buffer.top = peers[peer_index].output_buffer.base;
 
-                // Send greeting for peer
-                {
-                    struct server_header header = {
-                        .type = SERVER_PACKET_GREETING,
+                    struct server_batch_header batch = {
+                        .num_packets = 0,
                     };
+                    APPEND(&peers[peer_index].output_buffer, &batch);
 
-                    struct server_packet_greeting greeting = {
-                        .initial_tick = tick,
-                        .initial_x = peers[peer_index].player.x,
-                        .initial_y = peers[peer_index].player.y,
-                        .peer_index = peer_index,
-                    };
-
-                    output_buffer.top = output_buffer.base;
-                    APPEND(&output_buffer, &header);
-                    APPEND(&output_buffer, &greeting);
-
-                    ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-                    enet_peer_send(event.peer, 0, packet);
-                }
-
-                // Send greeting to all other peers
-                {
-                    struct server_header header = {
-                        .type = SERVER_PACKET_PEER_GREETING,
-                    };
-
-                    struct server_packet_peer_greeting greeting = {
-                        .initial_x = peers[peer_index].player.x,
-                        .initial_y = peers[peer_index].player.y,
-                        .peer_index = peer_index,
-                    };
-
-                    output_buffer.top = output_buffer.base;
-                    APPEND(&output_buffer, &header);
-                    APPEND(&output_buffer, &greeting);
-
-                    ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                        if (!peers[i].connected || i == peer_index)
-                            continue;
-                        enet_peer_send(peers[i].enet_peer, 0, packet);
-                    }
-                }
-
-                // Send greeting to this peer about all other peers already connected
-                {
-                    struct server_header header = {
-                        .type = SERVER_PACKET_PEER_GREETING,
-                    };
-
-                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                        if (!peers[i].connected || i == peer_index)
-                            continue;
-                        struct server_packet_peer_greeting greeting = {
-                            .initial_x = peers[i].player.x,
-                            .initial_y = peers[i].player.y,
-                            .peer_index = i,
+                    // Send greeting for peer
+                    {
+                        struct server_header header = {
+                            .type = SERVER_PACKET_GREETING,
                         };
 
-                        output_buffer.top = output_buffer.base;
-                        APPEND(&output_buffer, &header);
-                        APPEND(&output_buffer, &greeting);
+                        struct server_packet_greeting greeting = {
+                            .initial_net_tick = net_tick,
+                            .initial_x = peers[peer_index].player.x,
+                            .initial_y = peers[peer_index].player.y,
+                            .peer_index = peer_index,
+                        };
 
-                        ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-                        enet_peer_send(event.peer, 0, packet);
+                        new_packet(&peers[peer_index]);
+                        APPEND(&peers[peer_index].output_buffer, &header);
+                        APPEND(&peers[peer_index].output_buffer, &greeting);
                     }
-                }
-                break;
-            }
-            case ENET_EVENT_TYPE_RECEIVE: {
-                char *p = event.packet->data;
-                struct client_header *header = (struct client_header *) p;
-                p += sizeof(struct client_header);
 
-                switch (header->type) {
-                case CLIENT_PACKET_UPDATE: {
+                    // Send greeting to all other peers
+                    {
+                        struct server_header header = {
+                            .type = SERVER_PACKET_PEER_GREETING,
+                        };
+
+                        struct server_packet_peer_greeting greeting = {
+                            .initial_x = peers[peer_index].player.x,
+                            .initial_y = peers[peer_index].player.y,
+                            .peer_index = peer_index,
+                        };
+
+                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                            if (!peers[i].connected || i == peer_index)
+                                continue;
+                            new_packet(&peers[i]);
+                            APPEND(&peers[i].output_buffer, &header);
+                            APPEND(&peers[i].output_buffer, &greeting);
+                        }
+                    }
+
+                    // Send greeting to this peer about all other peers already connected
+                    {
+                        struct server_header header = {
+                            .type = SERVER_PACKET_PEER_GREETING,
+                        };
+
+                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                            if (!peers[i].connected || i == peer_index)
+                                continue;
+                            struct server_packet_peer_greeting greeting = {
+                                .initial_x = peers[i].player.x,
+                                .initial_y = peers[i].player.y,
+                                .peer_index = i,
+                            };
+
+                            new_packet(&peers[peer_index]);
+                            APPEND(&peers[peer_index].output_buffer, &header);
+                            APPEND(&peers[peer_index].output_buffer, &greeting);
+                        }
+                    }
+                    break;
+                }
+                case ENET_EVENT_TYPE_RECEIVE: {
+                    struct byte_buffer input_buffer = {
+                        .base = event.packet->data,
+                        .size = event.packet->dataLength,
+                    };
+                    input_buffer.top = input_buffer.base;
+                    struct client_batch_header *batch;
+                    POP(&input_buffer, &batch);
+
+                    const u8 peer_index = *(u8 *)event.peer->data;
+                    assert(peer_index >= 0 && peer_index < MAX_CLIENTS);
+                    assert(peers[peer_index].connected);
+
                     i8 adjustment = 0;
-                    i64 diff = (i64) tick + (VALID_TICK_WINDOW-1) - (i64) header->tick;
+                    i64 diff = (i64) net_tick + (VALID_TICK_WINDOW-1) - (i64) batch->net_tick;
                     if (diff < INT8_MIN || diff > INT8_MAX) {
-                        printf("tick diff outside range of adjustment variable!\n");
+                        printf("net_tick diff outside range of adjustment variable!\n");
                         // TODO(anjo): what do?
                         break;
                     }
@@ -219,115 +221,115 @@ int main() {
                         // Need adjustment
                         adjustment = (i8) diff;
                     }
-
-                    if (header->tick >= tick) {
-                        struct client_packet_update *input_update = (struct client_packet_update *) p;
-
+                    if (batch->net_tick >= net_tick) {
                         if (diff < -(VALID_TICK_WINDOW-1)) {
-                            printf("Allowing packet, too late: tick %llu, should be >= %llu\n", header->tick, tick);
+                            printf("Allowing packet, too late: net_tick %llu, should be >= %llu\n", batch->net_tick, net_tick);
                         }
-
-                        const u8 peer_index = *(u8 *)event.peer->data;
-                        assert(peer_index >= 0 && peer_index < MAX_CLIENTS);
-                        struct peer *peer = &peers[peer_index];
-                        struct update_log_entry entry = {
-                            .client_tick = header->tick,
-                            .server_tick = tick,
-                            .adjustment = adjustment,
-                            .adjustment_iteration = header->adjustment_iteration,
-                            .input_update = *input_update,
-                        };
-                        CIRCULAR_BUFFER_APPEND(&peer->update_log, entry);
                     } else {
                         struct server_header response_header = {
                             .type = SERVER_PACKET_DROPPED,
-                            .adjustment = adjustment,
-                            .adjustment_iteration = header->adjustment_iteration,
                         };
 
-                        printf("Dropping packet, too early: tick %llu, should be >= %llu\n", header->tick, tick);
+                        printf("Dropping packet, too early: net_tick %llu, should be >= %llu\n", batch->net_tick, net_tick);
 
-                        output_buffer.top = output_buffer.base;
-                        APPEND(&output_buffer, &response_header);
-
-                        ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-                        enet_peer_send(event.peer, 0, packet);
+                        new_packet(&peers[peer_index]);
+                        APPEND(&peers[peer_index].output_buffer, &response_header);
+                        break;
                     }
 
+                    {
+                        struct server_batch_header *server_batch = (void *) peers[peer_index].output_buffer.base;
+                        server_batch->adjustment = adjustment;
+                        server_batch->adjustment_iteration = batch->adjustment_iteration;
+                    }
+
+                    for (u16 packet = 0; packet < batch->num_packets; ++packet) {
+                        struct client_header *header;
+                        POP(&input_buffer, &header);
+
+                        switch (header->type) {
+                        case CLIENT_PACKET_UPDATE: {
+                            struct client_packet_update *input_update;
+                            POP(&input_buffer, &input_update);
+
+                            struct peer *peer = &peers[peer_index];
+                            struct update_log_entry entry = {
+                                .client_sim_tick = header->sim_tick,
+                                .server_net_tick = net_tick,
+                                .input_update = *input_update,
+                            };
+                            CIRCULAR_BUFFER_APPEND(&peer->update_log, entry);
+                        } break;
+                        default:
+                            printf("Received unknown packet type %d\n", header->type);
+                        }
+                    }
                 } break;
-                default:
-                    printf("Received unknown packet type\n");
-                }
-            } break;
 
-            case ENET_EVENT_TYPE_DISCONNECT: {
-                u8 peer_index = *(u8 *) event.peer->data;
-                struct peer *p = &peers[peer_index];
-                printf("%d disconnected.\n", peer_index);
+                case ENET_EVENT_TYPE_DISCONNECT: {
+                    u8 peer_index = *(u8 *) event.peer->data;
+                    struct peer *p = &peers[peer_index];
+                    printf("%d disconnected.\n", peer_index);
 
-                {
-                    struct server_header response_header = {
-                        .type = SERVER_PACKET_PEER_DISCONNECTED,
-                    };
+                    {
+                        struct server_header response_header = {
+                            .type = SERVER_PACKET_PEER_DISCONNECTED,
+                        };
 
-                    struct server_packet_peer_disconnected disc = {
-                        .peer_index = peer_index,
-                    };
+                        struct server_packet_peer_disconnected disc = {
+                            .peer_index = peer_index,
+                        };
 
-                    output_buffer.top = output_buffer.base;
-                    APPEND(&output_buffer, &response_header);
-                    APPEND(&output_buffer, &disc);
-                    ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-
-                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                        if (!peers[i].connected || i == peer_index)
-                            continue;
-                        enet_peer_send(peers[i].enet_peer, 0, packet);
+                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                            if (!peers[i].connected || i == peer_index)
+                                continue;
+                            new_packet(&peers[i]);
+                            APPEND(&peers[i].output_buffer, &response_header);
+                            APPEND(&peers[i].output_buffer, &disc);
+                        }
                     }
-                }
 
-                peer_disconnect(p);
-                --num_peers;
-                free(event.peer->data);
-                event.peer->data = NULL;
-            } break;
+                    peer_disconnect(p);
+                    --num_peers;
+                    free(event.peer->data);
+                    event.peer->data = NULL;
+                } break;
 
-            case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: {
-                u8 peer_index = *(u8 *) event.peer->data;
-                struct peer *p = &peers[peer_index];
-                printf("%d disconnected due to timeout.\n", peer_index);
+                case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: {
+                    u8 peer_index = *(u8 *) event.peer->data;
+                    struct peer *p = &peers[peer_index];
+                    printf("%d disconnected due to timeout.\n", peer_index);
 
-                {
-                    struct server_header response_header = {
-                        .type = SERVER_PACKET_PEER_DISCONNECTED,
-                    };
+                    {
+                        struct server_header response_header = {
+                            .type = SERVER_PACKET_PEER_DISCONNECTED,
+                        };
 
-                    struct server_packet_peer_disconnected disc = {
-                        .peer_index = peer_index,
-                    };
+                        struct server_packet_peer_disconnected disc = {
+                            .peer_index = peer_index,
+                        };
 
-                    output_buffer.top = output_buffer.base;
-                    APPEND(&output_buffer, &response_header);
-                    APPEND(&output_buffer, &disc);
-                    ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
 
-                    for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                        if (!peers[i].connected || i == peer_index)
-                            continue;
-                        enet_peer_send(peers[i].enet_peer, 0, packet);
+                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                            if (!peers[i].connected || i == peer_index)
+                                continue;
+                            new_packet(&peers[i]);
+                            APPEND(&peers[i].output_buffer, &response_header);
+                            APPEND(&peers[i].output_buffer, &disc);
+                        }
                     }
+
+                    peer_disconnect(p);
+                    --num_peers;
+                    free(event.peer->data);
+                    event.peer->data = NULL;
+                } break;
+
+                case ENET_EVENT_TYPE_NONE:
+                    break;
                 }
-
-                peer_disconnect(p);
-                --num_peers;
-                free(event.peer->data);
-                event.peer->data = NULL;
-            } break;
-
-            case ENET_EVENT_TYPE_NONE:
-                break;
+                enet_packet_destroy(event.packet);
             }
-            enet_packet_destroy(event.packet);
         }
 
         for (u8 i = 0; i < MAX_CLIENTS; ++i) {
@@ -336,28 +338,28 @@ int main() {
             struct peer *peer = &peers[i];
             if (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
-                if (entry->client_tick <= tick) {
+                if (entry->client_sim_tick < sim_tick) {
+                    printf("%llu, %llu\n", entry->client_sim_tick, sim_tick);
+                }
+                assert(entry->client_sim_tick >= sim_tick);
+                if (entry->client_sim_tick == sim_tick) {
                     move(&peer->player, &entry->input_update.input, dt);
 
                     // Send AUTH packet to peer
                     {
                         struct server_header response_header = {
                             .type = SERVER_PACKET_AUTH,
-                            .adjustment = entry->adjustment,
-                            .adjustment_iteration = entry->adjustment_iteration,
                         };
 
                         struct server_packet_auth auth = {
-                            .tick = entry->client_tick,
+                            .sim_tick = entry->client_sim_tick,
                             .x = peer->player.x,
                             .y = peer->player.y,
                         };
 
-                        output_buffer.top = output_buffer.base;
-                        APPEND(&output_buffer, &response_header);
-                        APPEND(&output_buffer, &auth);
-                        ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
-                        enet_peer_send(peer->enet_peer, 0, packet);
+                        new_packet(peer);
+                        APPEND(&peer->output_buffer, &response_header);
+                        APPEND(&peer->output_buffer, &auth);
                     }
 
                     // Send PEER_AUTH packet to all other peers
@@ -368,25 +370,41 @@ int main() {
                         };
 
                         struct server_packet_peer_auth peer_auth = {
-                            .tick = entry->client_tick,
+                            .sim_tick = entry->client_sim_tick,
                             .x = peer->player.x,
                             .y = peer->player.y,
                             .peer_index = i,
                         };
 
-                        output_buffer.top = output_buffer.base;
-                        APPEND(&output_buffer, &response_header);
-                        APPEND(&output_buffer, &peer_auth);
-                        ENetPacket *packet = enet_packet_create(output_buffer.base, output_buffer.top-output_buffer.base, ENET_PACKET_FLAG_RELIABLE);
 
                         for (u8 j = 0; j < MAX_CLIENTS; ++j) {
                             if (!peers[j].connected || i == j)
                                 continue;
-                            enet_peer_send(peers[j].enet_peer, 0, packet);
+                            new_packet(&peers[j]);
+                            APPEND(&peers[j].output_buffer, &response_header);
+                            APPEND(&peers[j].output_buffer, &peer_auth);
                         }
                     }
 
                     CIRCULAR_BUFFER_POP(&peer->update_log);
+                }
+            }
+        }
+
+        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+            for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+                if (!peers[i].connected)
+                    continue;
+                const size_t size = (intptr_t) peers[i].output_buffer.top - (intptr_t) peers[i].output_buffer.base;
+                if (size > sizeof(struct server_batch_header)) {
+                    ENetPacket *packet = enet_packet_create(peers[i].output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
+                    enet_peer_send(peers[i].enet_peer, 0, packet);
+                    peers[i].output_buffer.top = peers[i].output_buffer.base;
+
+                    struct server_batch_header batch = {
+                        .num_packets = 0,
+                    };
+                    APPEND(&peers[i].output_buffer, &batch);
                 }
             }
         }
@@ -408,7 +426,9 @@ int main() {
             time_subtract(&frame_delta, &frame_desired, &frame_delta);
             nanosleep(&frame_delta, NULL);
         }
-        tick++;
+        if (sim_tick % NET_PER_SIM_TICKS == 0)
+            net_tick++;
+        sim_tick++;
     }
 
     enet_host_destroy(server);
