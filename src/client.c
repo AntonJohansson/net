@@ -139,6 +139,7 @@ int main() {
     i8 adjustment = 0;
     u8 adjustment_iteration = 0;
     i32 total_adjustment = 0;
+    u64 pre_adjustment_sim_tick = 0;
 
     while (running) {
         // Begin frame
@@ -170,6 +171,7 @@ int main() {
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
+                        pre_adjustment_sim_tick = sim_tick;
                         ++adjustment_iteration;
                     }
 
@@ -373,8 +375,10 @@ int main() {
             // Adjustment when behind of server
             // we want to process frames as fast as possible,
             // so no sleeping.
-            --adjustment;
-            // TODO(anjo): Doesn't work for net_tick
+            if (sim_tick - pre_adjustment_sim_tick >= NET_PER_SIM_TICKS) {
+                --adjustment;
+                pre_adjustment_sim_tick = sim_tick;
+            }
         } else {
             // Only sleep remaining frame time if we aren't fast forwarding
             time_current(&frame_end);
