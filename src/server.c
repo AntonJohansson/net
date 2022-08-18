@@ -14,7 +14,7 @@
 #define HEIGHT 600
 
 #define PACKET_LOG_SIZE 2048
-#define OUTPUT_BUFFER_SIZE 1024
+#define OUTPUT_BUFFER_SIZE 8192
 #define INPUT_BUFFER_LENGTH 16
 #define UPDATE_LOG_BUFFER_SIZE 512
 #define VALID_TICK_WINDOW 2
@@ -47,6 +47,7 @@ struct update_log_buffer {
 
 struct peer {
     bool connected;
+    bool update_processed;
     struct player player;
     struct update_log_buffer update_log;
     struct byte_buffer output_buffer;
@@ -88,7 +89,8 @@ int main() {
 
     struct timespec frame_start = {0},
                     frame_end   = {0},
-                    frame_delta = {0};
+                    frame_delta = {0},
+                    frame_diff = {0};
 
     struct timespec frame_desired = {
         .tv_sec = 0,
@@ -97,7 +99,8 @@ int main() {
 
     u64 sim_tick = 0;
     u64 net_tick = 0;
-    const f32 dt = time_nanoseconds(&frame_desired);
+    const f32 dt = time_nanoseconds(&frame_desired) / (f32) NANOSECS_PER_SEC;
+    f32 fps = 0.0f;
 
     struct peer peers[MAX_CLIENTS] = {0};
     u8 num_peers = 0;
@@ -124,8 +127,7 @@ int main() {
                     *(u8 *)event.peer->data = peer_index;
 
                     peers[peer_index].connected = true;
-                    peers[peer_index].player.x = 400.0f;
-                    peers[peer_index].player.y = 300.0f;
+                    peers[peer_index].player.pos = (v2) {0, 0};
                     peers[peer_index].enet_peer = event.peer;
                     peers[peer_index].output_buffer.base = malloc(OUTPUT_BUFFER_SIZE);
                     peers[peer_index].output_buffer.size = OUTPUT_BUFFER_SIZE;
@@ -144,8 +146,7 @@ int main() {
 
                         struct server_packet_greeting greeting = {
                             .initial_net_tick = net_tick,
-                            .initial_x = peers[peer_index].player.x,
-                            .initial_y = peers[peer_index].player.y,
+                            .initial_pos = peers[peer_index].player.pos,
                             .peer_index = peer_index,
                         };
 
@@ -161,8 +162,7 @@ int main() {
                         };
 
                         struct server_packet_peer_greeting greeting = {
-                            .initial_x = peers[peer_index].player.x,
-                            .initial_y = peers[peer_index].player.y,
+                            .initial_pos = peers[peer_index].player.pos,
                             .peer_index = peer_index,
                         };
 
@@ -185,8 +185,7 @@ int main() {
                             if (!peers[i].connected || i == peer_index)
                                 continue;
                             struct server_packet_peer_greeting greeting = {
-                                .initial_x = peers[i].player.x,
-                                .initial_y = peers[i].player.y,
+                                .initial_pos = peers[i].player.pos,
                                 .peer_index = i,
                             };
 
@@ -336,14 +335,25 @@ int main() {
             if (!peers[i].connected)
                 continue;
             struct peer *peer = &peers[i];
+peer_update_log_label:
             if (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
                 if (entry->client_sim_tick < sim_tick) {
                     printf("%llu, %llu\n", entry->client_sim_tick, sim_tick);
                 }
+
+                if (entry->client_sim_tick < sim_tick) {
+                    // TODO(anjo): remove goto, I'm lazy
+                    //             we somehow ended up with a packet from the past???
+                    printf("Something fucky is amiss!\n");
+                    CIRCULAR_BUFFER_POP(&peer->update_log);
+                    goto peer_update_log_label;
+                }
+
                 assert(entry->client_sim_tick >= sim_tick);
                 if (entry->client_sim_tick == sim_tick) {
-                    move(&peer->player, &entry->input_update.input, dt);
+                    move(&map, &peer->player, &entry->input_update.input, dt);
+                    peer->update_processed = true;
 
                     // Send AUTH packet to peer
                     {
@@ -353,8 +363,7 @@ int main() {
 
                         struct server_packet_auth auth = {
                             .sim_tick = entry->client_sim_tick,
-                            .x = peer->player.x,
-                            .y = peer->player.y,
+                            .player = peer->player,
                         };
 
                         new_packet(peer);
@@ -371,11 +380,9 @@ int main() {
 
                         struct server_packet_peer_auth peer_auth = {
                             .sim_tick = entry->client_sim_tick,
-                            .x = peer->player.x,
-                            .y = peer->player.y,
+                            .player = peer->player,
                             .peer_index = i,
                         };
-
 
                         for (u8 j = 0; j < MAX_CLIENTS; ++j) {
                             if (!peers[j].connected || i == j)
@@ -409,13 +416,36 @@ int main() {
             }
         }
 
-        BeginDrawing();
-        ClearBackground(RAYWHITE);
-        DrawText("server", 10, 10, 20, BLACK);
         for (u8 i = 0; i < MAX_CLIENTS; ++i) {
             if (!peers[i].connected)
                 continue;
-            DrawCircle(peers[i].player.x, peers[i].player.y, 10.0f, RED);
+            if (peers[i].update_processed) {
+                peers[i].update_processed = false;
+                continue;
+            }
+            struct player *player = &peers[i].player;
+            struct input input = {0};
+            move(&map, player, &input, dt);
+        }
+
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+        DrawText("server", 10, 10, 20, BLACK);
+        if (sim_tick % FPS == 0) {
+            fps = 1.0f / ((f32)time_nanoseconds(&frame_delta)/(f32)NANOSECS_PER_SEC);
+        }
+        if (!isinf(fps))
+            DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
+        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+            if (!peers[i].connected)
+                continue;
+            struct player *player = &peers[i].player;
+            {
+                const f32 line_len = 30.0f;
+                const f32 line_thick = 3.0f;
+                DrawLineEx((Vector2) {player->pos.x, player->pos.y}, (Vector2) {player->pos.x + line_len*player->look.x, player->pos.y + line_len*player->look.y}, line_thick, RED);
+            }
+            DrawCircle(player->pos.x, player->pos.y, 10.0f, RED);
         }
         EndDrawing();
 
@@ -423,8 +453,8 @@ int main() {
         time_current(&frame_end);
         time_subtract(&frame_delta, &frame_end, &frame_start);
         if (time_less_than(&frame_delta, &frame_desired)) {
-            time_subtract(&frame_delta, &frame_desired, &frame_delta);
-            nanosleep(&frame_delta, NULL);
+            time_subtract(&frame_diff, &frame_desired, &frame_delta);
+            nanosleep(&frame_diff, NULL);
         }
         if (sim_tick % NET_PER_SIM_TICKS == 0)
             net_tick++;

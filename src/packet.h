@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "update.h"
+#include "v2.h"
 
 enum server_packet_type {
     SERVER_PACKET_GREETING,
@@ -44,30 +45,26 @@ struct client_header {
 __attribute__((packed))
 struct server_packet_greeting {
     u64 initial_net_tick;
-    f32 initial_x;
-    f32 initial_y;
+    v2 initial_pos;
     u8 peer_index;
 };
 
 __attribute__((packed))
 struct server_packet_peer_greeting {
-    f32 initial_x;
-    f32 initial_y;
+    v2 initial_pos;
     u8 peer_index;
 };
 
 __attribute__((packed))
 struct server_packet_auth {
     u64 sim_tick;
-    f32 x;
-    f32 y;
+    struct player player;
 };
 
 __attribute__((packed))
 struct server_packet_peer_auth {
     u64 sim_tick;
-    f32 x;
-    f32 y;
+    struct player player;
     u8 peer_index;
 };
 

@@ -19,7 +19,7 @@ typedef uint64_t u64;
 typedef float    f32;
 typedef double   f64;
 
-#define MAX_CLIENTS 4
+#define MAX_CLIENTS 128
 #define FPS 60
 #define NET_PER_SIM_TICKS 2
 
