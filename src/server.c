@@ -8,10 +8,13 @@
 #include <signal.h>
 #include <math.h>
 
+#if defined(DRAW)
+#include "draw.h"
 #include <raylib.h>
 
 #define WIDTH 800
 #define HEIGHT 600
+#endif
 
 #define PACKET_LOG_SIZE 2048
 #define OUTPUT_BUFFER_SIZE 8192
@@ -48,13 +51,14 @@ struct update_log_buffer {
 struct peer {
     bool connected;
     bool update_processed;
-    struct player player;
+    struct player *player;
     struct update_log_buffer update_log;
     struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
 };
 
 static inline void peer_disconnect(struct peer *p) {
+    p->player->occupied = false;
     memset(p, 0, sizeof(struct peer));
 }
 
@@ -100,12 +104,21 @@ int main() {
     u64 sim_tick = 0;
     u64 net_tick = 0;
     const f32 dt = time_nanoseconds(&frame_desired) / (f32) NANOSECS_PER_SEC;
+    f32 t = 0.0f;
     f32 fps = 0.0f;
+
+    struct game game = {
+        .projectiles = {0},
+        .map = map,
+    };
 
     struct peer peers[MAX_CLIENTS] = {0};
     u8 num_peers = 0;
 
+#if defined(DRAW)
     InitWindow(WIDTH, HEIGHT, "server");
+    HideCursor();
+#endif
 
     while (running) {
         time_current(&frame_start);
@@ -115,7 +128,12 @@ int main() {
             while (enet_host_service(server, &event, 0) > 0) {
                 switch (event.type) {
                 case ENET_EVENT_TYPE_CONNECT: {
-                    printf("A new client connected from %x:%u.\n",  event.peer->address.host, event.peer->address.port);
+                    i8 ip[64] = {0};
+                    if (enet_address_get_host_ip_new(&event.peer->address, (char *) ip, ARRLEN(ip)) == 0) {
+                        printf("A new client connected from %s:%u.\n", ip, event.peer->address.port);
+                    } else {
+                        printf("A new client connected from ????:%u.\n", event.peer->address.port);
+                    }
 
                     assert(num_peers < MAX_CLIENTS);
                     u8 peer_index = 0;
@@ -127,7 +145,20 @@ int main() {
                     *(u8 *)event.peer->data = peer_index;
 
                     peers[peer_index].connected = true;
-                    peers[peer_index].player.pos = (v2) {0, 0};
+
+                    struct player *player = NULL;
+                    for (u32 i = 0; i < MAX_CLIENTS; ++i) {
+                        player = &game.players[i];
+                        if (!player->occupied)
+                            break;
+                    }
+
+                    assert(player != NULL);
+                    player->occupied = true;
+                    player->pos = (v2) {0, 0};
+                    player->hue = 20.0f;
+                    peers[peer_index].player = player;
+
                     peers[peer_index].enet_peer = event.peer;
                     peers[peer_index].output_buffer.base = malloc(OUTPUT_BUFFER_SIZE);
                     peers[peer_index].output_buffer.size = OUTPUT_BUFFER_SIZE;
@@ -146,7 +177,7 @@ int main() {
 
                         struct server_packet_greeting greeting = {
                             .initial_net_tick = net_tick,
-                            .initial_pos = peers[peer_index].player.pos,
+                            .initial_pos = peers[peer_index].player->pos,
                             .peer_index = peer_index,
                         };
 
@@ -162,7 +193,8 @@ int main() {
                         };
 
                         struct server_packet_peer_greeting greeting = {
-                            .initial_pos = peers[peer_index].player.pos,
+                            .initial_pos = peers[peer_index].player->pos,
+                            .health = peers[peer_index].player->health,
                             .peer_index = peer_index,
                         };
 
@@ -185,7 +217,7 @@ int main() {
                             if (!peers[i].connected || i == peer_index)
                                 continue;
                             struct server_packet_peer_greeting greeting = {
-                                .initial_pos = peers[i].player.pos,
+                                .initial_pos = peers[i].player->pos,
                                 .peer_index = i,
                             };
 
@@ -222,14 +254,14 @@ int main() {
                     }
                     if (batch->net_tick >= net_tick) {
                         if (diff < -(VALID_TICK_WINDOW-1)) {
-                            printf("Allowing packet, too late: net_tick %llu, should be >= %llu\n", batch->net_tick, net_tick);
+                            printf("Allowing packet, too late: net_tick %lu, should be >= %lu\n", batch->net_tick, net_tick);
                         }
                     } else {
                         struct server_header response_header = {
                             .type = SERVER_PACKET_DROPPED,
                         };
 
-                        printf("Dropping packet, too early: net_tick %llu, should be >= %llu\n", batch->net_tick, net_tick);
+                        printf("Dropping packet, too early: net_tick %lu, should be >= %lu\n", batch->net_tick, net_tick);
 
                         new_packet(&peers[peer_index]);
                         APPEND(&peers[peer_index].output_buffer, &response_header);
@@ -339,7 +371,7 @@ peer_update_log_label:
             if (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
                 if (entry->client_sim_tick < sim_tick) {
-                    printf("%llu, %llu\n", entry->client_sim_tick, sim_tick);
+                    printf("%lu, %lu\n", entry->client_sim_tick, sim_tick);
                 }
 
                 if (entry->client_sim_tick < sim_tick) {
@@ -352,7 +384,7 @@ peer_update_log_label:
 
                 assert(entry->client_sim_tick >= sim_tick);
                 if (entry->client_sim_tick == sim_tick) {
-                    move(&map, &peer->player, &entry->input_update.input, dt);
+                    move(&game, peer->player, &entry->input_update.input, dt, false);
                     peer->update_processed = true;
 
                     // Send AUTH packet to peer
@@ -363,7 +395,7 @@ peer_update_log_label:
 
                         struct server_packet_auth auth = {
                             .sim_tick = entry->client_sim_tick,
-                            .player = peer->player,
+                            .player = *peer->player,
                         };
 
                         new_packet(peer);
@@ -380,7 +412,7 @@ peer_update_log_label:
 
                         struct server_packet_peer_auth peer_auth = {
                             .sim_tick = entry->client_sim_tick,
-                            .player = peer->player,
+                            .player = *peer->player,
                             .peer_index = i,
                         };
 
@@ -423,31 +455,29 @@ peer_update_log_label:
                 peers[i].update_processed = false;
                 continue;
             }
-            struct player *player = &peers[i].player;
+            struct player *player = peers[i].player;
             struct input input = {0};
-            move(&map, player, &input, dt);
+            move(&game, player, &input, dt, false);
         }
 
+        update_projectiles(&game, dt);
+
+#if defined(DRAW)
+        if (IsKeyDown(KEY_Q))
+            running = false;
         BeginDrawing();
         ClearBackground(RAYWHITE);
+        draw_game(&game, t);
+
         DrawText("server", 10, 10, 20, BLACK);
         if (sim_tick % FPS == 0) {
             fps = 1.0f / ((f32)time_nanoseconds(&frame_delta)/(f32)NANOSECS_PER_SEC);
         }
         if (!isinf(fps))
             DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
-        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-            if (!peers[i].connected)
-                continue;
-            struct player *player = &peers[i].player;
-            {
-                const f32 line_len = 30.0f;
-                const f32 line_thick = 3.0f;
-                DrawLineEx((Vector2) {player->pos.x, player->pos.y}, (Vector2) {player->pos.x + line_len*player->look.x, player->pos.y + line_len*player->look.y}, line_thick, RED);
-            }
-            DrawCircle(player->pos.x, player->pos.y, 10.0f, RED);
-        }
+
         EndDrawing();
+#endif
 
         // End frame
         time_current(&frame_end);
@@ -459,10 +489,13 @@ peer_update_log_label:
         if (sim_tick % NET_PER_SIM_TICKS == 0)
             net_tick++;
         sim_tick++;
+        t += dt;
     }
 
     enet_host_destroy(server);
     enet_deinitialize();
+#if defined(DRAW)
     CloseWindow();
+#endif
     return 0;
 }

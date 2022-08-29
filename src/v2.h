@@ -67,3 +67,9 @@ static inline f32 v2len(v2 v) {
 static inline v2 v2normalize(v2 v) {
     return v2div(v, v2len(v));
 }
+
+static inline v2 v2reflect(v2 v, v2 r) {
+    assert(f32_equal(v2len2(r), 1.0f));
+    const f32 amount_in_dir = v2dot(v, r);
+    return v2add(v, v2scale(-2.0f*amount_in_dir, r));
+}

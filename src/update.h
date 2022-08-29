@@ -4,6 +4,8 @@
 #include <math.h>
 #include "v2.h"
 
+#include "draw.h"
+
 enum input_type {
     INPUT_NULL,
 
@@ -13,6 +15,8 @@ enum input_type {
     INPUT_MOVE_DOWN,
 
     INPUT_MOVE_DODGE,
+
+    INPUT_SHOOT,
 
     INPUT_QUIT,
     INPUT_LAST,
@@ -24,24 +28,38 @@ struct input {
     bool active[INPUT_LAST];
 };
 
+enum player_state {
+    PLAYER_STATE_DEFAULT = 0,
+    PLAYER_STATE_SLIDING,
+};
+
 struct player {
+    bool occupied;
+
     v2 pos;
     v2 velocity;
-    v2 acceleration;
 
     v2 dodge;
     v2 look;
 
     f32 time_left_in_dodge;
     f32 time_left_in_dodge_delay;
+    f32 time_left_in_shoot_delay;
+
+    f32 hue;
+
+    f32 health;
+
+    enum player_state state;
 };
 
-struct map {
-    u8 *data;
-    u32 width;
-    u32 height;
-    f32 tile_size;
-    v2 origin;
+struct projectile {
+    v2 pos;
+    v2 velocity;
+    f32 time_left;
+    bool alive;
+    u32 times_bounced;
+    v2 end_pos;
 };
 
 enum tiles {
@@ -50,34 +68,59 @@ enum tiles {
     TILE_STONE = '#',
 };
 
+struct map {
+    const u8 *data;
+    u32 width;
+    u32 height;
+    f32 tile_size;
+    v2 origin;
+};
+
+#define MAX_PROJECTILES 64
+
+struct game {
+    struct projectile projectiles[MAX_PROJECTILES];
+    struct map map;
+    struct player players[MAX_CLIENTS];
+};
+
+static inline bool map_coord_in_bounds(const struct map *map, i32 i, i32 j) {
+    return i >= 0 && i <= map->width &&
+           j >= 0 && j <= map->height;
+}
+
+static inline void map_coord(const struct map *map, i32 *i, i32 *j, v2 at) {
+    *i = (at.x - map->origin.x)/map->tile_size;
+    *j = (at.y - map->origin.y)/map->tile_size;
+}
+
 static inline u8 map_at(const struct map *map, v2 at) {
-    i32 i = (at.x - map->origin.x)/map->tile_size;
-    i32 j = (at.y - map->origin.y)/map->tile_size;
-    bool in_map = i >= 0 && i <= map->width &&
-                  j >= 0 && j <= map->height;
-    if (!in_map)
+    i32 i = 0;
+    i32 j = 0;
+    map_coord(map, &i, &j, at);
+    if (!map_coord_in_bounds(map, i, j))
         return TILE_INVALID;
 
     return map->data[j*map->width + i];
 }
 
 static struct map map = {
-    .data = "################"
-            "#              #"
-            "# ####         #"
-            "# #            #"
-            "# #            #"
-            "# #            #"
-            "#              #"
-            "#              #"
-            "#              #"
-            "#              #"
-            "#              #"
-            "#              #"
-            "#        #     #"
-            "#              #"
-            "#              #"
-            "################",
+    .data = (const u8 *) "################"
+                         "#              #"
+                         "# ####         #"
+                         "# #            #"
+                         "# #            #"
+                         "# #            #"
+                         "#              #"
+                         "#              #"
+                         "#              #"
+                         "#              #"
+                         "#              #"
+                         "#              #"
+                         "#        #     #"
+                         "#              #"
+                         "#              #"
+                         "################",
     .width = 16,
     .height = 16,
     .tile_size = 1.0f,
@@ -104,6 +147,28 @@ struct circle {
     f32 radius;
 };
 
+static struct collision_result collide_circle_circle(struct circle c0,
+                                                     struct circle c1) {
+    const f32 radius_sum = c0.radius + c1.radius;
+    const v2 center_diff = v2sub(c1.pos, c0.pos);
+    const f32 center_diff_len2 = v2len2(center_diff);
+
+    struct collision_result result = {
+        .colliding = false,
+    };
+
+    if (center_diff_len2 > radius_sum*radius_sum)
+        return result;
+
+    const f32 center_diff_len = sqrtf(center_diff_len2);
+    const f32 overlap = radius_sum - center_diff_len;
+
+    result.colliding = true;
+    result.resolve = v2scale(overlap/center_diff_len, center_diff);
+
+    return result;
+}
+
 static struct collision_result collide_rect_circle(struct rectangle rect,
                                                    struct circle circle) {
     v2 nearest = {
@@ -127,15 +192,264 @@ static struct collision_result collide_rect_circle(struct rectangle rect,
     return result;
 }
 
-static inline void move(const struct map *map,
+static bool collide_ray_aabb(v2 pos, v2 dir, struct rectangle rect, v2 *res) {
+    const f32 x0 = rect.pos.x;
+    const f32 x1 = rect.pos.x + rect.width;
+    const f32 y0 = rect.pos.y;
+    const f32 y1 = rect.pos.y + rect.height;
+
+    printf("pos: {%f, %f}\n", pos.x, pos.y);
+    printf("dir: {%f, %f}\n", dir.x, dir.y);
+
+    const f32 dist_x0 = fabsf(x0 - pos.x);
+    const f32 dist_x1 = fabsf(x1 - pos.x);
+    const f32 dist_y0 = fabsf(y0 - pos.y);
+    const f32 dist_y1 = fabsf(y1 - pos.y);
+
+    printf("%f,%f,%f,%f\n", x0, x1, y0, y1);
+    printf("%f,%f,%f,%f\n", dist_x0, dist_x1, dist_y0, dist_y1);
+
+    const f32 x = (dist_x0 < dist_x1) ? x0 : x1;
+    const f32 y = (dist_y0 < dist_y1) ? y0 : y1;
+
+    printf("%f, %f\n", x, y);
+
+    const f32 hit_line_y = pos.y + (dir.y/dir.x)*fabsf(x - pos.x);
+    const f32 hit_line_x = pos.x + (dir.x/dir.y)*fabsf(y - pos.y);
+
+    const i32 hit_x = hit_line_x <= x1 && hit_line_x >= x0;
+    const i32 hit_y = hit_line_y <= y1 && hit_line_y >= y0;
+    const i32 hit = hit_x | hit_y;
+
+    printf("checking collide %d, %d\n", hit_x, hit_y);
+    printf("%f, %f\n", hit_line_x, hit_line_y);
+
+    if (!hit)
+        return false;
+
+    printf("hit\n");
+
+    if (hit_x)
+        *res = (v2) {hit_line_x, y};
+    else if (hit_y)
+        *res = (v2) {x, hit_line_y};
+
+    return true;
+}
+
+static void raycast(struct game *game, v2 pos, v2 dir, const f32 dt, v2 *res) {
+    assert(f32_equal(v2len2(dir), 1.0f));
+    const f32 dx = fabs(dir.x);
+    const f32 dy = fabs(dir.y);
+    i32 i0 = 0;
+    i32 j0 = 0;
+    map_coord(&game->map, &i0, &j0, pos);
+    assert(map_coord_in_bounds(&game->map, i0, j0));
+    if (dy > dx) {
+        const f32 a = dir.y/dy;
+        const f32 k = dx/dy;
+        const i32 len = (a < 0.0f) ? j0+1 : game->map.height - j0;
+        for (i32 dj = 0; dj < len; ++dj) {
+            const i32 j = j0 + a*dj;
+            const i32 i = i0 + a*k*dj;
+
+            printf("dj: %d, %d\n", i, j);
+
+            const u8 tile = game->map.data[j*game->map.width + i];
+            if (tile != TILE_STONE)
+                continue;
+
+            struct rectangle rect = {
+                .pos = (v2) {
+                    .x = game->map.origin.x + i*game->map.tile_size,
+                    .y = game->map.origin.y + j*game->map.tile_size,
+                },
+                .width = game->map.tile_size,
+                .height = game->map.tile_size,
+            };
+
+            if (collide_ray_aabb(pos, dir, rect, res))
+                return;
+        }
+    } else {
+        const f32 a = dir.x/dx;
+        const f32 k = dy/dx;
+        const i32 len = (a < 0.0f) ? i0+1 : game->map.width - i0;
+        for (i32 di = 0; di < len; ++di) {
+            const i32 i = i0 + a*di;
+            const i32 j = j0 + a*k*di;
+
+            printf("di: %d, %d\n", i, j);
+
+            const u8 tile = game->map.data[j*game->map.width + i];
+            if (tile != TILE_STONE)
+                continue;
+
+            struct rectangle rect = {
+                .pos = (v2) {
+                    .x = game->map.origin.x + i*game->map.tile_size,
+                    .y = game->map.origin.y + j*game->map.tile_size,
+                },
+                .width = game->map.tile_size,
+                .height = game->map.tile_size,
+            };
+
+            if (collide_ray_aabb(pos, dir, rect, res))
+                return;
+        }
+    }
+
+    assert(false);
+}
+
+static void update_projectiles(struct game *game,
+                               const f32 dt) {
+    for (u32 i = 0; i < MAX_PROJECTILES; ++i) {
+        struct projectile *projectile = &game->projectiles[i];
+        if (!projectile->alive)
+            continue;
+        if (v2iszero(projectile->velocity))
+            continue;
+        v2 res;
+        raycast(game, projectile->pos, v2normalize(projectile->velocity), dt, &res);
+        v2 new_pos = v2add(projectile->pos, v2scale(dt, projectile->velocity));
+        projectile->end_pos = res;
+
+        if (v2len2(v2sub(res, projectile->pos)) < v2len2(v2sub(new_pos, projectile->pos))) {
+            projectile->pos = res;
+        } else {
+            projectile->pos = new_pos;
+        }
+
+        // Check projectile <-> wall collision
+        const v2 tile_offsets[8] = {
+            {+1,  0},
+            {+1, -1},
+            { 0, -1},
+            {-1, -1},
+            {-1,  0},
+            {-1, +1},
+            { 0, +1},
+            {+1, +1},
+        };
+
+        for (i32 i = 0; i < ARRLEN(tile_offsets); ++i) {
+            const v2 at = v2add(projectile->pos, v2scale(game->map.tile_size, tile_offsets[i]));
+            const u8 tile = map_at(&game->map, at);
+            if (tile != TILE_STONE)
+                continue;
+
+            //const f32 radius = (p->state == PLAYER_STATE_SLIDING) ? 0.7f * 0.25f : 0.25f;
+            const f32 radius = 0.25f;
+            struct collision_result result = collide_rect_circle((struct rectangle) {
+                                                                    .pos = {floorf(at.x), floorf(at.y)},
+                                                                    .width = game->map.tile_size,
+                                                                    .height = game->map.tile_size,
+                                                                 },
+                                                                 (struct circle) {
+                                                                    .pos = projectile->pos,
+                                                                    .radius = radius,
+                                                                 });
+            if (!result.colliding)
+                continue;
+
+            if (v2iszero(result.resolve))
+                continue;
+
+            projectile->pos = v2add(projectile->pos, result.resolve);
+
+            //if (projectile->times_bounced == 0) {
+            //    const v2 reflect_dir = v2normalize(result.resolve);
+            //    projectile->velocity = v2reflect(projectile->velocity, reflect_dir);
+            //    ++projectile->times_bounced;
+            //}
+        }
+
+        if (projectile->time_left > 0.0f) {
+            projectile->time_left -= dt;
+            if (projectile->time_left <= 0.0f) {
+                projectile->time_left = 0.0f;
+                projectile->alive = false;
+            }
+        }
+    }
+
+    // Check projectile <-> projectile collision
+    //
+    // NOTE(anjo): Checking every projectile against
+    // every other is ofcourse very inefficient, but
+    // we don't expect to have a lot of projectiles,
+    // so it's fine
+    for (u32 i = 0; i < MAX_PROJECTILES; ++i) {
+        struct projectile *projectile0 = &game->projectiles[i];
+        if (!projectile0->alive)
+            continue;
+        for (u32 j = 0; j < MAX_PROJECTILES; ++j) {
+            struct projectile *projectile1 = &game->projectiles[j];
+            if (!projectile1->alive || i == j)
+                continue;
+
+            assert(projectile0 != projectile1);
+            struct collision_result result = collide_circle_circle((struct circle) {
+                                                                       .pos = projectile0->pos,
+                                                                       .radius = 0.25f,
+                                                                   },
+                                                                   (struct circle) {
+                                                                       .pos = projectile1->pos,
+                                                                       .radius = 0.25f,
+                                                                   });
+
+            if (!result.colliding)
+                continue;
+
+            projectile0->alive = false;
+            projectile0->time_left = 0.0f;
+            projectile1->alive = false;
+            projectile1->time_left = 0.0f;
+        }
+    }
+}
+
+static inline void move(struct game *game,
                         struct player *p,
-                        struct input *input, const f32 dt) {
-    const f32 move_speed = 1.0f;
-    const f32 dodge_speed = 2.0f;
-    const f32 dodge_time = 1.0f;
+                        struct input *input,
+                        const f32 dt,
+                        bool replaying) {
+    const f32 move_acceleration = 0.5f/dt;
+    const f32 max_move_speed = 5.0f;
+
+    const f32 dodge_acceleration = 1.0f/dt;
+    const f32 dodge_deceleration = 0.10f/dt;
+    const f32 max_dodge_speed = 10.0f;
+    const f32 dodge_time = 0.25f;
     const f32 dodge_delay_time = 1.0f;
 
     p->look = v2normalize((v2) {input->x, input->y});
+
+    bool can_shoot = p->time_left_in_shoot_delay == 0.0f;
+    if (input->active[INPUT_SHOOT] && can_shoot) {
+        struct projectile *projectile = NULL;
+        for (u32 i = 0; i < MAX_PROJECTILES; ++i) {
+            projectile = &game->projectiles[i];
+            if (!projectile->alive)
+                break;
+        }
+
+        if (projectile != NULL) {
+            projectile->pos = p->pos;
+            projectile->velocity = v2scale(5.0f, p->look);
+            projectile->time_left = 5.0f;
+            projectile->times_bounced = 0;
+            projectile->alive = true;
+            p->time_left_in_shoot_delay = 0.5f;
+        }
+    }
+
+    if (p->time_left_in_shoot_delay > 0.0f) {
+        p->time_left_in_shoot_delay -= dt;
+        if (p->time_left_in_shoot_delay <= 0.0f)
+            p->time_left_in_shoot_delay = 0.0f;
+    }
 
     if (p->time_left_in_dodge_delay > 0.0f) {
         p->time_left_in_dodge_delay -= dt;
@@ -143,57 +457,92 @@ static inline void move(const struct map *map,
             p->time_left_in_dodge_delay = 0.0f;
     }
 
-    bool in_dodge = p->time_left_in_dodge > 0.0f;
+    // Dodge state
+    bool in_dodge = p->state == PLAYER_STATE_SLIDING;
     bool in_dodge_delay = p->time_left_in_dodge_delay > 0.0f;
     if (!in_dodge_delay && !in_dodge && input->active[INPUT_MOVE_DODGE]) {
         p->dodge = p->look;
         p->time_left_in_dodge = dodge_time;
+        p->state = PLAYER_STATE_SLIDING;
+
+        // If we have a velocity in any other direction than the dodge dir,
+        // redirect it in the dodge dir
+        const f32 speed = v2len(p->velocity);
+        p->velocity = v2scale(speed, p->dodge);
     }
 
     bool has_moved = false;
 
-    in_dodge = p->time_left_in_dodge > 0.0f;
-    if (in_dodge) {
-        //p->pos = v2add(p->pos, v2scale(dt*dodge_speed, p->dodge));
-        has_moved = true;
+    // Dodge movement
+    if (p->state == PLAYER_STATE_SLIDING) {
+        if (p->time_left_in_dodge > 0.0f) {
+            p->velocity = v2add(p->velocity, v2scale(dt*dodge_acceleration, p->dodge));
+            const f32 speed = v2len(p->velocity);
+            if (speed > max_dodge_speed) {
+                p->velocity = v2scale(max_dodge_speed, v2normalize(p->velocity));
+            }
 
-        p->time_left_in_dodge -= dt;
-        if (p->time_left_in_dodge <= 0.0f) {
-            p->time_left_in_dodge = 0.0f;
+            has_moved = true;
+
+            p->time_left_in_dodge -= dt;
+            if (p->time_left_in_dodge <= 0.0f) {
+                p->time_left_in_dodge = 0.0f;
+            }
+        } else {
+            const v2 slowdown_dir = v2neg(v2normalize(p->velocity));
+            const f32 speed = v2len(p->velocity);
+            if (speed > 0.0f) {
+                const f32 slowdown = fminf(speed, dt*dodge_deceleration);
+                if (speed < dt*dodge_deceleration) {
+                    p->state = PLAYER_STATE_DEFAULT;
+                    p->time_left_in_dodge_delay = dodge_delay_time;
+                }
+                p->velocity = v2add(p->velocity, v2scale(slowdown, slowdown_dir));
+            }
+        }
+    }
+
+    // Process player inputs
+    const f32 dx = 1.0f*(f32) input->active[INPUT_MOVE_RIGHT] - 1.0f*(f32) input->active[INPUT_MOVE_LEFT];
+    const f32 dy = 1.0f*(f32) input->active[INPUT_MOVE_DOWN]  - 1.0f*(f32) input->active[INPUT_MOVE_UP];
+    const v2 dv = {dx, dy};
+    const f32 len2 = v2len2(dv);
+
+    if (p->state == PLAYER_STATE_SLIDING && p->time_left_in_dodge == 0.0f) {
+        const f32 speed = v2len(p->velocity);
+        if (speed <= max_move_speed && len2 > 0.0f) {
+            p->state = PLAYER_STATE_DEFAULT;
             p->time_left_in_dodge_delay = dodge_delay_time;
         }
     }
 
-    in_dodge = p->time_left_in_dodge > 0.0f;
-    if (!in_dodge) {
-        const f32 dx = 1.0f*(f32) input->active[INPUT_MOVE_RIGHT] - 1.0f*(f32) input->active[INPUT_MOVE_LEFT];
-        const f32 dy = 1.0f*(f32) input->active[INPUT_MOVE_DOWN]  - 1.0f*(f32) input->active[INPUT_MOVE_UP];
-        const v2 dv = {dx, dy};
-        const f32 len2 = v2len2(dv);
+    // Player movement
+    if (p->state != PLAYER_STATE_SLIDING) {
         if (len2 > 0.0f) {
             const f32 len = sqrtf(len2);
-            p->acceleration = v2add(p->acceleration, v2scale(0.1f/len, dv));
+
+            p->velocity = v2add(p->velocity, v2scale(dt*move_acceleration/len, dv));
+            const f32 speed = v2len(p->velocity);
+            if (speed > max_move_speed) {
+                p->velocity = v2scale(max_move_speed, v2normalize(p->velocity));
+            }
+        } else {
+            const v2 slowdown_dir = v2neg(v2normalize(p->velocity));
+            const f32 speed = v2len(p->velocity);
+            if (speed > 0.0f) {
+                const f32 slowdown = fminf(speed, dt*move_acceleration);
+                p->velocity = v2add(p->velocity, v2scale(slowdown, slowdown_dir));
+            }
         }
     }
 
-    if (!v2iszero(p->velocity)) {
-        const v2 vel_dir = v2normalize(p->velocity);
-        const f32 acc_in_vel_dir = v2dot(vel_dir, p->acceleration);
-        if (acc_in_vel_dir > 0.0f) {
-            const f32 acc = fminf(acc_in_vel_dir, -0.05f);
-            p->acceleration = v2add(p->acceleration, v2scale(acc, vel_dir));
-        }
-    }
-
-    if (!v2iszero(p->acceleration)) {
-        p->velocity = v2add(p->velocity, v2scale(dt, p->acceleration));
-    }
-
+    // "Integrate" velocity
     if (!v2iszero(p->velocity)) {
         p->pos = v2add(p->pos, v2scale(dt, p->velocity));
         has_moved = true;
     }
 
+    // Handle collisions
     if (has_moved) {
         const v2 tile_offsets[8] = {
             {+1,  0},
@@ -207,21 +556,26 @@ static inline void move(const struct map *map,
         };
 
         for (i32 i = 0; i < ARRLEN(tile_offsets); ++i) {
-            const v2 at = v2add(p->pos, v2scale(map->tile_size, tile_offsets[i]));
-            const u8 tile = map_at(map, at);
+            const v2 at = v2add(p->pos, v2scale(game->map.tile_size, tile_offsets[i]));
+            const u8 tile = map_at(&game->map, at);
             if (tile != TILE_STONE)
                 continue;
 
+            //const f32 radius = (p->state == PLAYER_STATE_SLIDING) ? 0.7f * 0.25f : 0.25f;
+            const f32 radius = 0.25f;
             struct collision_result result = collide_rect_circle((struct rectangle) {
                                                                     .pos = {floorf(at.x), floorf(at.y)},
-                                                                    .width = map->tile_size,
-                                                                    .height = map->tile_size,
+                                                                    .width = game->map.tile_size,
+                                                                    .height = game->map.tile_size,
                                                                  },
                                                                  (struct circle) {
                                                                     .pos = p->pos,
-                                                                    .radius = 0.25f,
+                                                                    .radius = radius,
                                                                  });
             if (!result.colliding)
+                continue;
+
+            if (v2iszero(result.resolve))
                 continue;
 
             p->pos = v2add(p->pos, result.resolve);
@@ -233,20 +587,9 @@ static inline void move(const struct map *map,
                 // the vectors should >= 90+45 deg, we choose -0.6f to be a bit
                 // more lenient, feels a bit better.
                 if (dot <= -0.6f) {
+                    p->state = PLAYER_STATE_DEFAULT;
                     p->time_left_in_dodge = 0.0f;
                     p->time_left_in_dodge_delay = dodge_delay_time;
-                }
-            }
-
-            {
-                f32 dot = v2dot(v2normalize(p->acceleration), v2normalize(result.resolve));
-                // resolve and dodge should be pointing in opposite directions.
-                // If the dot product is <= -0.5f the relative direction between
-                // the vectors should >= 90+45 deg, we choose -0.6f to be a bit
-                // more lenient, feels a bit better.
-                if (dot <= -0.6f) {
-                    p->acceleration = (v2) {0, 0};
-                    p->velocity = (v2) {0, 0};
                 }
             }
         }
