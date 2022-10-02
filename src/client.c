@@ -93,8 +93,11 @@ void client_handle_input(struct player *p, struct input *input) {
 int main(int argc, char **argv) {
     signal(SIGINT, inthandler);
 
-#if defined(STRESS)
     assert(argc > 1);
+    const char *ip = argv[1];
+
+#if defined(STRESS)
+    assert(argc > 2);
     const u32 stress_scale = 1;
     const u32 stress_n = (u32)atoi(argv[1]);
     u32 stress_init_r_frames = (stress_scale * stress_n) / 2;
@@ -131,7 +134,7 @@ int main(int argc, char **argv) {
     ENetAddress address = {0};
     ENetEvent event = {0};
     ENetPeer *peer = {0};
-    enet_address_set_host(&address, "localhost");
+    enet_address_set_host(&address, ip);
     address.port = 9053;
 
     peer = enet_host_connect(client, &address, 2, 0);
@@ -142,13 +145,14 @@ int main(int argc, char **argv) {
     /* Wait up to 5 seconds for the connection attempt to succeed. */
     if (enet_host_service(client, &event, 5000) > 0 &&
         event.type == ENET_EVENT_TYPE_CONNECT) {
-        puts("Connection to some.server.net:1234 succeeded.");
+        puts("Connection to server succeeded.");
     } else {
         /* Either the 5 seconds are up or a disconnect event was */
         /* received. Reset the peer in the event the 5 seconds   */
         /* had run out without any significant event.            */
         enet_peer_reset(peer);
-        puts("Connection to some.server.net:1234 failed.");
+        puts("Connection to server failed.");
+        exit(EXIT_FAILURE);
     }
 
 #if !defined(STRESS)

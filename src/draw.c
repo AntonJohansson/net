@@ -126,10 +126,12 @@ void draw_water(f32 t) {
             const i32 rx = screen_tile_size * (x - num_tiles_x/2);
             const i32 ry = screen_tile_size * (y - num_tiles_y/2);
 
-            const f32 wave = 20.0f * cosf(2*M_PI*(0.7f*x - 0.3f*y)/30.0f     - 0.01f*t) + 20.0f * sinf(2*M_PI*(0.7f*x - 0.3f*y)/30.0f - 0.01f*t)
-                           + 10.0f * cosf(2*M_PI*(0.9f*x - 0.3f*y)/23.0f     - 0.1f*t) + 10.0f * sinf(2*M_PI*(0.9f*x - 0.3f*y)/23.0f - 0.1f*t)
-                           +  5.0f * cosf(2*M_PI*(0.3f*x - 0.7f*y)/11.0f     - 0.15f*t) +  5.0f * sinf(2*M_PI*(0.7f*x - 0.3f*y)/11.0f - 0.15f*t)
-                           +  3.0f * cosf(2*M_PI*(0.3f*(x^y) - 0.7f*y)/11.0f - 0.3f*t) +  3.0f * sinf(2*M_PI*(0.7f*x - 0.3f*y)/11.0f - 0.3f*t);
+            const f32 t_scale = 1.5f;
+
+            const f32 wave = 20.0f * cosf(2*M_PI*(0.7f*x - 0.3f*y)/30.0f     - 0.01f*t_scale*t) + 20.0f * sinf(2*M_PI*(0.7f*x - 0.3f*y)/30.0f - 0.01f*t_scale*t)
+                           + 10.0f * cosf(2*M_PI*(0.9f*x - 0.3f*y)/23.0f     -  0.1f*t_scale*t) + 10.0f * sinf(2*M_PI*(0.9f*x - 0.3f*y)/23.0f -  0.1f*t_scale*t)
+                           +  5.0f * cosf(2*M_PI*(0.3f*x - 0.7f*y)/11.0f     - 0.15f*t_scale*t) +  5.0f * sinf(2*M_PI*(0.7f*x - 0.3f*y)/11.0f - 0.15f*t_scale*t)
+                           +  3.0f * cosf(2*M_PI*(0.3f*(x^y) - 0.7f*y)/11.0f -  0.3f*t_scale*t) +  3.0f * sinf(2*M_PI*(0.7f*x - 0.3f*y)/11.0f -  0.3f*t_scale*t);
             const f32 h = 200.0f + 0.30000f*wave;
             const f32 s = 0.35f  + 0.00100f*wave;
             const f32 l = 0.5f   + 0.00005f*wave*wave;

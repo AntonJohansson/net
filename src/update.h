@@ -214,6 +214,9 @@ static bool collide_ray_aabb(v2 pos, v2 dir, struct rectangle rect, v2 *res) {
 
     printf("%f, %f\n", x, y);
 
+    if (v2dot((v2) {x-pos.x,y-pos.y}, dir) <= 0.0f)
+        return false;
+
     const f32 hit_line_y = pos.y + (dir.y/dir.x)*fabsf(x - pos.x);
     const f32 hit_line_x = pos.x + (dir.x/dir.y)*fabsf(y - pos.y);
 
@@ -239,52 +242,11 @@ static bool collide_ray_aabb(v2 pos, v2 dir, struct rectangle rect, v2 *res) {
 
 static void raycast(struct game *game, v2 pos, v2 dir, const f32 dt, v2 *res) {
     assert(f32_equal(v2len2(dir), 1.0f));
-    const f32 dx = fabs(dir.x);
-    const f32 dy = fabs(dir.y);
-    i32 i0 = 0;
-    i32 j0 = 0;
-    map_coord(&game->map, &i0, &j0, pos);
-    assert(map_coord_in_bounds(&game->map, i0, j0));
-    if (dy > dx) {
-        const f32 a = dir.y/dy;
-        const f32 k = dx/dy;
-        const i32 len = (a < 0.0f) ? j0+1 : game->map.height - j0;
-        for (i32 dj = 0; dj < len; ++dj) {
-            const i32 j = j0 + a*dj;
-            const i32 i = i0 + a*k*dj;
-
-            printf("dj: %d, %d\n", i, j);
-
+    for (i32 j = 0; j < game->map.height; ++j) {
+        for (i32 i = 0; i < game->map.width; ++i) {
             const u8 tile = game->map.data[j*game->map.width + i];
             if (tile != TILE_STONE)
                 continue;
-
-            struct rectangle rect = {
-                .pos = (v2) {
-                    .x = game->map.origin.x + i*game->map.tile_size,
-                    .y = game->map.origin.y + j*game->map.tile_size,
-                },
-                .width = game->map.tile_size,
-                .height = game->map.tile_size,
-            };
-
-            if (collide_ray_aabb(pos, dir, rect, res))
-                return;
-        }
-    } else {
-        const f32 a = dir.x/dx;
-        const f32 k = dy/dx;
-        const i32 len = (a < 0.0f) ? i0+1 : game->map.width - i0;
-        for (i32 di = 0; di < len; ++di) {
-            const i32 i = i0 + a*di;
-            const i32 j = j0 + a*k*di;
-
-            printf("di: %d, %d\n", i, j);
-
-            const u8 tile = game->map.data[j*game->map.width + i];
-            if (tile != TILE_STONE)
-                continue;
-
             struct rectangle rect = {
                 .pos = (v2) {
                     .x = game->map.origin.x + i*game->map.tile_size,
@@ -298,7 +260,6 @@ static void raycast(struct game *game, v2 pos, v2 dir, const f32 dt, v2 *res) {
                 return;
         }
     }
-
     assert(false);
 }
 
@@ -421,7 +382,7 @@ static inline void move(struct game *game,
     const f32 dodge_acceleration = 1.0f/dt;
     const f32 dodge_deceleration = 0.10f/dt;
     const f32 max_dodge_speed = 10.0f;
-    const f32 dodge_time = 0.25f;
+    const f32 dodge_time = 0.10f;
     const f32 dodge_delay_time = 1.0f;
 
     p->look = v2normalize((v2) {input->x, input->y});
