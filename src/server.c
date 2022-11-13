@@ -17,7 +17,7 @@
 #endif
 
 #define PACKET_LOG_SIZE 2048
-#define OUTPUT_BUFFER_SIZE 16384
+#define OUTPUT_BUFFER_SIZE 32000
 #define INPUT_BUFFER_LENGTH 16
 #define UPDATE_LOG_BUFFER_SIZE 512
 #define VALID_TICK_WINDOW 2
@@ -60,6 +60,7 @@ struct peer {
 static inline void peer_disconnect(struct peer *p) {
     p->player->occupied = false;
     memset(p, 0, sizeof(struct peer));
+    byte_buffer_free(&p->output_buffer);
 }
 
 static inline void new_packet(struct peer *p) {
@@ -160,9 +161,7 @@ int main() {
                     peers[peer_index].player = player;
 
                     peers[peer_index].enet_peer = event.peer;
-                    peers[peer_index].output_buffer.base = malloc(OUTPUT_BUFFER_SIZE);
-                    peers[peer_index].output_buffer.size = OUTPUT_BUFFER_SIZE;
-                    peers[peer_index].output_buffer.top = peers[peer_index].output_buffer.base;
+                    peers[peer_index].output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
 
                     struct server_batch_header batch = {
                         .num_packets = 0,
@@ -229,11 +228,7 @@ int main() {
                     break;
                 }
                 case ENET_EVENT_TYPE_RECEIVE: {
-                    struct byte_buffer input_buffer = {
-                        .base = event.packet->data,
-                        .size = event.packet->dataLength,
-                    };
-                    input_buffer.top = input_buffer.base;
+                    struct byte_buffer input_buffer = byte_buffer_init(event.packet->data, event.packet->dataLength);
                     struct client_batch_header *batch;
                     POP(&input_buffer, &batch);
 

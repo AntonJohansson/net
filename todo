@@ -4,5 +4,31 @@ Client:
 Server:
     - [ ]
 
-Both:
-    - [x] Handle clients leaving + (holes in the array)
+Game idea:
+    - multiplayer + cooperative
+    - Simple game loop
+    - The game should have an end
+        - endless games can tend to feel pointless
+    - What about something like vampire survivors?
+        - stupid, monsters continually spawning,
+          fighting them back
+        - Building? No
+        - Something like ror2? With abilities + items?
+            - Items should reward cooperation
+                - One player goes water, other player goes electricity
+        - The further out you get the harder the monsters
+        - Goal is to get strong enough and kill the monster nests
+        - Get some type of upgrade points based on how long you survive
+        - Nice movement, able to upgrade player speed, dash time, dash speed, dash control
+        - Able to upgrade player damage, player health
+        - Some player passive
+
+  - 2D + topdown, basic grafik etc.
+  - multiplayer + nåt som belönar cooperation
+  - Typ som survivor.io fast coop, dumma monster som spawnar kontinuerligt
+  - Isället för att monstren blir svårare med tiden, så blir dom svårare desto längre ut du kommer
+  - Random map som består av connected öar
+  - Målet är att ta sig till öarna längst ut på mappen och förstöra nåt monsterbo av nå slag
+  - Monstren droppar nåt som du kan använda för att permanent  uppgradera din karaktär, tanken är att det är svårt att ta sig längre ut så man behöver spelar flera gånger för att gradvis ta sig utåt på mappen
+  - Du kan permanent uppgradera saker som base damage/hp, movement speed, dash speed, hur mycket du kan styra din dash medans du dashar osv
+  - Items rewardar cooperation på nåt sätt, inte säker hur, men typ jag går vattenbaserade abilities och du går blixt eller nåt, så gör vi tillsammans mer damage när vi comboar våra attacker. Man kan säkert komma på fler coola kombos

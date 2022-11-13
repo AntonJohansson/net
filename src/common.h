@@ -5,6 +5,7 @@
 #include <time.h>
 #include <assert.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include <stdio.h>
 
@@ -96,6 +97,26 @@ struct byte_buffer {
     u8 *top;
     size_t size;
 };
+
+static inline struct byte_buffer byte_buffer_init(void *ptr, size_t size) {
+    return (struct byte_buffer) {
+        .base = ptr,
+        .size = size,
+        .top = ptr,
+    };
+}
+
+static inline struct byte_buffer byte_buffer_alloc(size_t size) {
+    void *ptr = malloc(size);
+    assert(ptr);
+    return byte_buffer_init(ptr, size);
+}
+
+static inline void byte_buffer_free(struct byte_buffer *b) {
+    free(b->base);
+    b->size = 0;
+    b->top = NULL;
+}
 
 #define APPEND(buffer, data) \
     append(buffer, data, sizeof(*data))

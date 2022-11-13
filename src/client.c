@@ -46,7 +46,6 @@ struct peer_shoot_buffer {
     u64 used;
 };
 
-
 struct peer {
     bool connected;
     struct player *player;
@@ -99,7 +98,7 @@ int main(int argc, char **argv) {
 #if defined(STRESS)
     assert(argc > 2);
     const u32 stress_scale = 1;
-    const u32 stress_n = (u32)atoi(argv[1]);
+    const u32 stress_n = (u32)atoi(argv[2]);
     u32 stress_init_r_frames = (stress_scale * stress_n) / 2;
     u32 stress_init_u_frames = (stress_scale * stress_n) / 2;
     u32 stress_l_frames = (stress_scale * stress_n);
@@ -108,11 +107,7 @@ int main(int argc, char **argv) {
     u32 stress_u_frames = (stress_scale * stress_n);
 #endif
 
-    struct byte_buffer output_buffer = {
-        .base = malloc(OUTPUT_BUFFER_SIZE),
-        .size = OUTPUT_BUFFER_SIZE,
-    };
-    output_buffer.top = output_buffer.base;
+    struct byte_buffer output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
 
     {
         struct client_batch_header batch = {0};
@@ -514,7 +509,7 @@ int main(int argc, char **argv) {
 #endif
 
         // End frame
-        if (adjustment > 0) {
+        if (adjustment > 0 && run_network_tick) {
             // Adjustment when behind of server
             // we want to process frames as fast as possible,
             // so no sleeping.
@@ -568,6 +563,7 @@ int main(int argc, char **argv) {
     CloseWindow();
     graph_free(&graph);
 #endif
+    byte_buffer_free(&output_buffer);
 
     return 0;
 }

@@ -8,8 +8,8 @@ SERVER=${BUILDDIR}/server
 
 [ ! -d ${BUILDDIR} ] && mkdir ${BUILDDIR}
 
-${CC} -o ${SERVER}        src/server.c src/draw.c -g -O2 -lraylib -lm -std=gnu2x -DDRAW &
-${CC} -o ${CLIENT}        src/client.c src/draw.c -g -O2 -lraylib -lm -std=gnu2x -DCLIENT &
-${CC} -o ${CLIENT_STRESS} src/client.c -g -O2          -lm -std=gnu2x -DSTRESS &
+${CC} -o ${SERVER}        -fsanitize=address src/server.c src/draw.c -g -O0 -lpthread -lraylib -lm -std=gnu2x -DDRAW &
+${CC} -o ${CLIENT}        -fsanitize=address src/client.c src/draw.c -g -O0 -lpthread -lraylib -lm -std=gnu2x -DCLIENT &
+${CC} -o ${CLIENT_STRESS} -fsanitize=address src/client.c -g -O0            -lpthread          -lm -std=gnu2x -DSTRESS &
 
 wait
