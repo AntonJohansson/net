@@ -188,19 +188,6 @@ inline void draw_map(const struct map *map) {
     }
 }
 
-void draw_projectiles(struct game *game) {
-    const f32 radius = world_to_screen_length(0.25f);
-    for (u32 i = 0; i < MAX_PROJECTILES; ++i) {
-        struct projectile *projectile = &game->projectiles[i];
-        if (!projectile->alive)
-            continue;
-        const Vector2 pos = world_to_screen(projectile->pos);
-        DrawCircle(pos.x, pos.y, radius, RED);
-        const Vector2 end_pos = world_to_screen(projectile->end_pos);
-        DrawCircle(end_pos.x, end_pos.y, radius, GREEN);
-    }
-}
-
 void draw_player(struct player *p) {
     const f32 line_len = 0.35f;
     const f32 line_thick = 0.25f;
@@ -232,7 +219,6 @@ void draw_player(struct player *p) {
 void draw_game(struct game *game, const f32 t) {
     draw_water(t);
     draw_map(&game->map);
-    draw_projectiles(game);
     for (u8 i = 0; i < MAX_CLIENTS; ++i) {
         struct player *player = &game->players[i];
         if (!player->occupied)

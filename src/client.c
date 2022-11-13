@@ -9,11 +9,9 @@
 #include <signal.h>
 #include <math.h>
 #include "random.h"
-#if !defined(STRESS)
 #include <raylib.h>
 #include "color.h"
 #include "draw.h"
-#endif
 
 #define WIDTH 800
 #define HEIGHT 600
@@ -40,17 +38,10 @@ struct peer_auth_buffer {
     u64 used;
 };
 
-struct peer_shoot_buffer {
-    struct server_packet_peer_shoot data[UPDATE_LOG_BUFFER_SIZE];
-    u64 bottom;
-    u64 used;
-};
-
 struct peer {
     bool connected;
     struct player *player;
     struct peer_auth_buffer auth_buffer;
-    struct peer_shoot_buffer shoot_buffer;
 };
 
 static inline void peer_disconnect(struct peer *p) {
@@ -63,8 +54,6 @@ static inline void new_packet(struct byte_buffer *output_buffer) {
     assert(batch->num_packets < UINT16_MAX);
     ++batch->num_packets;
 }
-
-#if !defined(STRESS)
 
 void client_handle_input(struct player *p, struct input *input) {
     if (IsKeyDown(KEY_W))
@@ -87,25 +76,12 @@ void client_handle_input(struct player *p, struct input *input) {
     input->y = v.y - p->pos.y;
 }
 
-#endif
 
 int main(int argc, char **argv) {
     signal(SIGINT, inthandler);
 
     assert(argc > 1);
     const char *ip = argv[1];
-
-#if defined(STRESS)
-    assert(argc > 2);
-    const u32 stress_scale = 1;
-    const u32 stress_n = (u32)atoi(argv[2]);
-    u32 stress_init_r_frames = (stress_scale * stress_n) / 2;
-    u32 stress_init_u_frames = (stress_scale * stress_n) / 2;
-    u32 stress_l_frames = (stress_scale * stress_n);
-    u32 stress_d_frames = (stress_scale * stress_n);
-    u32 stress_r_frames = (stress_scale * stress_n);
-    u32 stress_u_frames = (stress_scale * stress_n);
-#endif
 
     struct byte_buffer output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
 
@@ -150,13 +126,11 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-#if !defined(STRESS)
     InitWindow(WIDTH, HEIGHT, "client");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
     HideCursor();
 
     struct graph graph = graph_new(2*FPS);
-#endif
 
     struct timespec frame_start = {0},
                     frame_end   = {0},
@@ -176,7 +150,6 @@ int main(int argc, char **argv) {
     struct input input_buffer[INPUT_BUFFER_LENGTH] = {0};
 
     struct game game = {
-        .projectiles = {0},
         .map = map,
     };
 
@@ -189,19 +162,14 @@ int main(int argc, char **argv) {
     i8 adjustment = 0;
     u8 adjustment_iteration = 0;
     i32 total_adjustment = 0;
-    u64 pre_adjustment_sim_tick = 0;
-    u64 init_sim_tick = 0;
 
     while (running) {
-#if defined(STRESS)
-        if ((sim_tick - init_sim_tick) / FPS >= 60) {
-            running = false;
-        }
-#endif
         // Begin frame
         time_current(&frame_start);
 
-        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+        bool run_network_tick = sim_tick % NET_PER_SIM_TICKS == 0;
+        bool sleep_this_frame = true;
+        if (run_network_tick) {
             // Adjustment when ahead of server
             if (adjustment < 0) {
                 for (u32 i = 0; i < NET_PER_SIM_TICKS; ++i)
@@ -213,6 +181,9 @@ int main(int argc, char **argv) {
                     sim_tick += NET_PER_SIM_TICKS;
                 }
                 continue;
+            } else if (adjustment > 0) {
+                sleep_this_frame = false;
+                --adjustment;
             }
 
             // Fetch network data
@@ -227,7 +198,6 @@ int main(int argc, char **argv) {
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
-                        pre_adjustment_sim_tick = sim_tick;
                         ++adjustment_iteration;
                     }
 
@@ -243,7 +213,6 @@ int main(int argc, char **argv) {
 
                             net_tick = greeting->initial_net_tick + initial_server_net_tick_offset;
                             sim_tick = net_tick * NET_PER_SIM_TICKS;
-                            init_sim_tick = net_tick * NET_PER_SIM_TICKS;
                             main_peer_index = greeting->peer_index;
                             assert(!peers[main_peer_index].connected);
                             peers[main_peer_index].connected = true;
@@ -333,16 +302,8 @@ int main(int argc, char **argv) {
                             const u8 peer_index = peer_auth->peer_index;
                             assert(peer_index >= 0 && peer_index < num_peers);
                             struct peer *peer = &peers[peer_index];
-                            CIRCULAR_BUFFER_APPEND(&peer->auth_buffer, *peer_auth);
-                        } break;
-                        case SERVER_PACKET_PEER_SHOOT: {
-                            struct server_packet_peer_shoot *peer_shoot = (struct server_packet_peer_shoot *) p;
-                            p += sizeof(struct server_packet_peer_shoot);
-
-                            const u8 peer_index = peer_shoot->peer_index;
-                            assert(peer_index >= 0 && peer_index < num_peers);
-                            struct peer *peer = &peers[peer_index];
-                            CIRCULAR_BUFFER_APPEND(&peer->shoot_buffer, *peer_shoot);
+                            *peer->player = peer_auth->player;
+                            //CIRCULAR_BUFFER_APPEND(&peer->auth_buffer, *peer_auth);
                         } break;
                         case SERVER_PACKET_PEER_DISCONNECTED: {
                             struct server_packet_peer_disconnected *disc = (struct server_packet_peer_disconnected *) p;
@@ -391,16 +352,6 @@ int main(int argc, char **argv) {
 
                 CIRCULAR_BUFFER_POP(&peer->auth_buffer);
             }
-            if (peer->shoot_buffer.used > 0) {
-                struct server_packet_peer_shoot *entry = &peer->shoot_buffer.data[peer->shoot_buffer.bottom];
-
-                if (active_tick < entry->sim_tick)
-                    continue;
-
-                //*peer->player = entry->player;
-
-                CIRCULAR_BUFFER_POP(&peer->shoot_buffer);
-            }
         }
 
         //
@@ -410,36 +361,9 @@ int main(int argc, char **argv) {
         struct player *player = peers[main_peer_index].player;
         input_count = (input_count + 1) % INPUT_BUFFER_LENGTH;
         memset(input->active, INPUT_NULL, sizeof(input->active));
-#if !defined(STRESS)
         if (connected) {
             client_handle_input(player, input);
         }
-#else
-        if (stress_init_r_frames > 0) {
-            input->active[INPUT_MOVE_RIGHT] = true;
-            --stress_init_r_frames;
-        } else if (stress_init_u_frames > 0) {
-            input->active[INPUT_MOVE_UP] = true;
-            --stress_init_u_frames;
-        } else if (stress_l_frames > 0) {
-            input->active[INPUT_MOVE_LEFT] = true;
-            --stress_l_frames;
-        } else if (stress_d_frames > 0) {
-            input->active[INPUT_MOVE_DOWN] = true;
-            --stress_d_frames;
-        } else if (stress_r_frames > 0) {
-            input->active[INPUT_MOVE_RIGHT] = true;
-            --stress_r_frames;
-        } else if (stress_u_frames > 0) {
-            input->active[INPUT_MOVE_UP] = true;
-            --stress_u_frames;
-        } else {
-            stress_l_frames = (stress_scale * stress_n);
-            stress_d_frames = (stress_scale * stress_n);
-            stress_r_frames = (stress_scale * stress_n);
-            stress_u_frames = (stress_scale * stress_n);
-        }
-#endif
 
         if (input->active[INPUT_QUIT])
             running = false;
@@ -463,11 +387,9 @@ int main(int argc, char **argv) {
 
             // Predictive move
             move(&game, player, input, dt, false);
-
-            update_projectiles(&game, dt);
         }
 
-        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+        if (run_network_tick) {
             const size_t size = (intptr_t) output_buffer.top - (intptr_t) output_buffer.base;
             if (size > sizeof(struct client_batch_header)) {
                 struct client_batch_header *batch = (void *) output_buffer.base;
@@ -484,7 +406,6 @@ int main(int argc, char **argv) {
             }
         }
 
-#if !defined(STRESS)
         // Render
         BeginDrawing();
         ClearBackground(RAYWHITE);
@@ -495,29 +416,22 @@ int main(int argc, char **argv) {
             if (sim_tick % FPS == 0) {
                 fps = 1.0f / ((f32)time_nanoseconds(&frame_delta)/(f32)NANOSECS_PER_SEC);
             }
-            if (!isinf(fps))
+            if (!isinf(fps)) {
                 DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
+                DrawText(TextFormat("ping: %f", dt * 1000.0f * NET_PER_SIM_TICKS * (f32) (-total_adjustment)), 10, 50, 20, GRAY);
+            }
 
             graph_append(&graph, v2len(player->velocity));
             draw_all_debug_v2s();
             draw_graph(&graph,
-                       (v2) {10, 60},
+                       (v2) {10, 80},
                        (v2) {300, 200},
                        (v2) {10, 10});
         }
         EndDrawing();
-#endif
 
         // End frame
-        if (adjustment > 0 && run_network_tick) {
-            // Adjustment when behind of server
-            // we want to process frames as fast as possible,
-            // so no sleeping.
-            if (sim_tick - pre_adjustment_sim_tick >= NET_PER_SIM_TICKS) {
-                --adjustment;
-                pre_adjustment_sim_tick = sim_tick;
-            }
-        } else {
+        if (sleep_this_frame) {
             // Only sleep remaining frame time if we aren't fast forwarding
             time_current(&frame_end);
             time_subtract(&frame_delta, &frame_end, &frame_start);
@@ -527,9 +441,9 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (sim_tick % NET_PER_SIM_TICKS == 0)
-            net_tick++;
-        sim_tick++;
+        if (run_network_tick)
+            ++net_tick;
+        ++sim_tick;
         t += dt;
     }
 
@@ -559,10 +473,8 @@ int main(int argc, char **argv) {
     enet_host_destroy(client);
     enet_deinitialize();
 
-#if !defined(STRESS)
     CloseWindow();
     graph_free(&graph);
-#endif
     byte_buffer_free(&output_buffer);
 
     return 0;

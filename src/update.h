@@ -4,7 +4,9 @@
 #include <math.h>
 #include "v2.h"
 
+#if defined(DRAW)
 #include "draw.h"
+#endif
 
 enum input_type {
     INPUT_NULL,
@@ -44,22 +46,12 @@ struct player {
 
     f32 time_left_in_dodge;
     f32 time_left_in_dodge_delay;
-    f32 time_left_in_shoot_delay;
 
     f32 hue;
 
     f32 health;
 
     enum player_state state;
-};
-
-struct projectile {
-    v2 pos;
-    v2 velocity;
-    f32 time_left;
-    bool alive;
-    u32 times_bounced;
-    v2 end_pos;
 };
 
 enum tiles {
@@ -79,7 +71,6 @@ struct map {
 #define MAX_PROJECTILES 64
 
 struct game {
-    struct projectile projectiles[MAX_PROJECTILES];
     struct map map;
     struct player players[MAX_CLIENTS];
 };
@@ -263,114 +254,6 @@ static void raycast(struct game *game, v2 pos, v2 dir, const f32 dt, v2 *res) {
     assert(false);
 }
 
-static void update_projectiles(struct game *game,
-                               const f32 dt) {
-    for (u32 i = 0; i < MAX_PROJECTILES; ++i) {
-        struct projectile *projectile = &game->projectiles[i];
-        if (!projectile->alive)
-            continue;
-        if (v2iszero(projectile->velocity))
-            continue;
-        v2 res;
-        raycast(game, projectile->pos, v2normalize(projectile->velocity), dt, &res);
-        v2 new_pos = v2add(projectile->pos, v2scale(dt, projectile->velocity));
-        projectile->end_pos = res;
-
-        if (v2len2(v2sub(res, projectile->pos)) < v2len2(v2sub(new_pos, projectile->pos))) {
-            projectile->pos = res;
-        } else {
-            projectile->pos = new_pos;
-        }
-
-        // Check projectile <-> wall collision
-        const v2 tile_offsets[8] = {
-            {+1,  0},
-            {+1, -1},
-            { 0, -1},
-            {-1, -1},
-            {-1,  0},
-            {-1, +1},
-            { 0, +1},
-            {+1, +1},
-        };
-
-        for (i32 i = 0; i < ARRLEN(tile_offsets); ++i) {
-            const v2 at = v2add(projectile->pos, v2scale(game->map.tile_size, tile_offsets[i]));
-            const u8 tile = map_at(&game->map, at);
-            if (tile != TILE_STONE)
-                continue;
-
-            //const f32 radius = (p->state == PLAYER_STATE_SLIDING) ? 0.7f * 0.25f : 0.25f;
-            const f32 radius = 0.25f;
-            struct collision_result result = collide_rect_circle((struct rectangle) {
-                                                                    .pos = {floorf(at.x), floorf(at.y)},
-                                                                    .width = game->map.tile_size,
-                                                                    .height = game->map.tile_size,
-                                                                 },
-                                                                 (struct circle) {
-                                                                    .pos = projectile->pos,
-                                                                    .radius = radius,
-                                                                 });
-            if (!result.colliding)
-                continue;
-
-            if (v2iszero(result.resolve))
-                continue;
-
-            projectile->pos = v2add(projectile->pos, result.resolve);
-
-            //if (projectile->times_bounced == 0) {
-            //    const v2 reflect_dir = v2normalize(result.resolve);
-            //    projectile->velocity = v2reflect(projectile->velocity, reflect_dir);
-            //    ++projectile->times_bounced;
-            //}
-        }
-
-        if (projectile->time_left > 0.0f) {
-            projectile->time_left -= dt;
-            if (projectile->time_left <= 0.0f) {
-                projectile->time_left = 0.0f;
-                projectile->alive = false;
-            }
-        }
-    }
-
-    // Check projectile <-> projectile collision
-    //
-    // NOTE(anjo): Checking every projectile against
-    // every other is ofcourse very inefficient, but
-    // we don't expect to have a lot of projectiles,
-    // so it's fine
-    for (u32 i = 0; i < MAX_PROJECTILES; ++i) {
-        struct projectile *projectile0 = &game->projectiles[i];
-        if (!projectile0->alive)
-            continue;
-        for (u32 j = 0; j < MAX_PROJECTILES; ++j) {
-            struct projectile *projectile1 = &game->projectiles[j];
-            if (!projectile1->alive || i == j)
-                continue;
-
-            assert(projectile0 != projectile1);
-            struct collision_result result = collide_circle_circle((struct circle) {
-                                                                       .pos = projectile0->pos,
-                                                                       .radius = 0.25f,
-                                                                   },
-                                                                   (struct circle) {
-                                                                       .pos = projectile1->pos,
-                                                                       .radius = 0.25f,
-                                                                   });
-
-            if (!result.colliding)
-                continue;
-
-            projectile0->alive = false;
-            projectile0->time_left = 0.0f;
-            projectile1->alive = false;
-            projectile1->time_left = 0.0f;
-        }
-    }
-}
-
 static inline void move(struct game *game,
                         struct player *p,
                         struct input *input,
@@ -386,31 +269,6 @@ static inline void move(struct game *game,
     const f32 dodge_delay_time = 1.0f;
 
     p->look = v2normalize((v2) {input->x, input->y});
-
-    bool can_shoot = p->time_left_in_shoot_delay == 0.0f;
-    if (input->active[INPUT_SHOOT] && can_shoot) {
-        struct projectile *projectile = NULL;
-        for (u32 i = 0; i < MAX_PROJECTILES; ++i) {
-            projectile = &game->projectiles[i];
-            if (!projectile->alive)
-                break;
-        }
-
-        if (projectile != NULL) {
-            projectile->pos = p->pos;
-            projectile->velocity = v2scale(5.0f, p->look);
-            projectile->time_left = 5.0f;
-            projectile->times_bounced = 0;
-            projectile->alive = true;
-            p->time_left_in_shoot_delay = 0.5f;
-        }
-    }
-
-    if (p->time_left_in_shoot_delay > 0.0f) {
-        p->time_left_in_shoot_delay -= dt;
-        if (p->time_left_in_shoot_delay <= 0.0f)
-            p->time_left_in_shoot_delay = 0.0f;
-    }
 
     if (p->time_left_in_dodge_delay > 0.0f) {
         p->time_left_in_dodge_delay -= dt;

@@ -50,7 +50,6 @@ void draw_v2(v2 pos, v2 v, f32 scale, Color color);
 void draw_tile(f32 x, f32 y, f32 border_thickness, Color light, Color dark);
 void draw_water(f32 t);
 void draw_map(const struct map *map);
-void draw_projectiles(struct game *game);
 void draw_player(struct player *p);
 void draw_game(struct game *game, const f32 t);
 void draw_graph(struct graph *g, v2 pos, v2 size, v2 margin);

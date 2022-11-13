@@ -20,7 +20,7 @@
 #define OUTPUT_BUFFER_SIZE 32000
 #define INPUT_BUFFER_LENGTH 16
 #define UPDATE_LOG_BUFFER_SIZE 512
-#define VALID_TICK_WINDOW 2
+#define VALID_TICK_WINDOW 5
 
 bool running = true;
 
@@ -109,7 +109,6 @@ int main() {
     f32 fps = 0.0f;
 
     struct game game = {
-        .projectiles = {0},
         .map = map,
     };
 
@@ -369,16 +368,11 @@ peer_update_log_label:
                     printf("%lu, %lu\n", entry->client_sim_tick, sim_tick);
                 }
 
-                if (entry->client_sim_tick < sim_tick) {
-                    // TODO(anjo): remove goto, I'm lazy
-                    //             we somehow ended up with a packet from the past???
-                    printf("Something fucky is amiss!\n");
-                    CIRCULAR_BUFFER_POP(&peer->update_log);
-                    goto peer_update_log_label;
-                }
+                // Even though we're sync wrt the network tick, the actual simulation
+                // tick need not be synced, if this happens just apply the packed
+                // immediately
 
-                assert(entry->client_sim_tick >= sim_tick);
-                if (entry->client_sim_tick == sim_tick) {
+                if (entry->client_sim_tick <= sim_tick) {
                     move(&game, peer->player, &entry->input_update.input, dt, false);
                     peer->update_processed = true;
 
@@ -455,8 +449,6 @@ peer_update_log_label:
             move(&game, player, &input, dt, false);
         }
 
-        update_projectiles(&game, dt);
-
 #if defined(DRAW)
         if (IsKeyDown(KEY_Q))
             running = false;
@@ -472,6 +464,12 @@ peer_update_log_label:
             DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
 
         EndDrawing();
+#else
+        if (sim_tick % FPS == 0) {
+            fps = 1.0f / ((f32)time_nanoseconds(&frame_delta)/(f32)NANOSECS_PER_SEC);
+            if (!isinf(fps))
+                printf("fps: %.0f\n", fps);
+        }
 #endif
 
         // End frame

@@ -10,7 +10,6 @@ enum server_packet_type {
     SERVER_PACKET_DROPPED,
     SERVER_PACKET_AUTH,
     SERVER_PACKET_PEER_AUTH,
-    SERVER_PACKET_PEER_SHOOT,
     SERVER_PACKET_PEER_DISCONNECTED,
 };
 
@@ -58,12 +57,6 @@ struct server_packet_auth {
 
 struct server_packet_peer_auth {
     struct player player;
-    u64 sim_tick;
-    u8 peer_index;
-};
-
-struct server_packet_peer_shoot {
-    struct projectile projectile;
     u64 sim_tick;
     u8 peer_index;
 };
