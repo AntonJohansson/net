@@ -380,16 +380,16 @@ static inline void move(struct game *game,
             if (tile != TILE_STONE)
                 continue;
 
-            //const f32 radius = (p->state == PLAYER_STATE_SLIDING) ? 0.7f * 0.25f : 0.25f;
+            // TODO(anjo): Get collision shape from player instead!
             const f32 radius = 0.25f;
             struct collision_result result = collide_rect_circle((struct rectangle) {
-                                                                    .pos = {floorf(at.x), floorf(at.y)},
-                                                                    .width = game->map.tile_size,
-                                                                    .height = game->map.tile_size,
+                                                                 .pos = {floorf(at.x), floorf(at.y)},
+                                                                 .width = game->map.tile_size,
+                                                                 .height = game->map.tile_size,
                                                                  },
                                                                  (struct circle) {
-                                                                    .pos = p->pos,
-                                                                    .radius = radius,
+                                                                 .pos = p->pos,
+                                                                 .radius = radius,
                                                                  });
             if (!result.colliding)
                 continue;
@@ -411,6 +411,32 @@ static inline void move(struct game *game,
                     p->time_left_in_dodge_delay = dodge_delay_time;
                 }
             }
+        }
+
+        if (replaying)
+            return;
+
+        for (i32 i = 0; i < ARRLEN(game->players); ++i) {
+            struct player *p0 = &game->players[i];
+            if (!p0->occupied || v2equal(p0->pos, p->pos))
+                continue;
+
+            const f32 radius = 0.25f;
+            struct collision_result result = collide_circle_circle((struct circle) {
+                                                                   .pos = p->pos,
+                                                                   .radius = radius
+                                                                   },
+                                                                   (struct circle) {
+                                                                   .pos = p0->pos,
+                                                                   .radius = radius
+                                                                   });
+            if (!result.colliding)
+                continue;
+
+            if (v2iszero(result.resolve))
+                continue;
+
+            p->pos = v2add(p->pos, v2scale(1.0f, result.resolve));
         }
     }
 }

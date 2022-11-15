@@ -44,29 +44,16 @@ static inline bool f32_equal(f32 a, f32 b) {
 // Time
 //
 
-#define NANOSECS_PER_SEC (1000000000ull)
+#define NANOSECONDS(n) (1000000000ull*(n))
 
-static inline void time_current(struct timespec *t) {
-    assert(clock_gettime(CLOCK_MONOTONIC, t) == 0);
+static inline u64 time_current() {
+    struct timespec t;
+    assert(clock_gettime(CLOCK_MONOTONIC, &t) == 0);
+    return t.tv_sec * NANOSECONDS(1) + t.tv_nsec;
 }
 
-static inline void time_subtract(struct timespec *res, struct timespec *a, struct timespec *b) {
-    assert(a->tv_sec >= b->tv_sec);
-    if (a->tv_nsec >= b->tv_nsec) {
-        res->tv_sec = a->tv_sec - b->tv_sec;
-        res->tv_nsec = a->tv_nsec - b->tv_nsec;
-    } else {
-        res->tv_sec = a->tv_sec - b->tv_sec - 1;
-        res->tv_nsec = NANOSECS_PER_SEC - (b->tv_nsec - a->tv_nsec);
-    }
-}
-
-static inline u64 time_nanoseconds(struct timespec *t) {
-    return t->tv_sec * NANOSECS_PER_SEC + t->tv_nsec;
-}
-
-static inline bool time_less_than(struct timespec *a, struct timespec *b) {
-    return time_nanoseconds(a) < time_nanoseconds(b);
+static inline void time_nanosleep(u64 t) {
+    nanosleep(&(struct timespec) { .tv_nsec = t }, NULL);
 }
 
 //

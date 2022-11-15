@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <math.h>
 
 #if defined(DRAW)
@@ -31,10 +30,13 @@ bool running = true;
 //             than that.
 //
 
-void inthandler(int sig) {
-    (void) sig;
-    running = false;
-}
+struct frame {
+    u64 desired_delta;
+    u64 delta;
+    u64 simulation_tick;
+    u64 network_tick;
+    f32 dt;
+};
 
 struct update_log_entry {
     u64 client_sim_tick;
@@ -70,8 +72,6 @@ static inline void new_packet(struct peer *p) {
 }
 
 int main() {
-    signal(SIGINT, inthandler);
-
     if (enet_initialize() != 0) {
         printf("An error occurred while initializing ENet.\n");
         return 1;
@@ -92,21 +92,13 @@ int main() {
 
     ENetEvent event = {0};
 
-    struct timespec frame_start = {0},
-                    frame_end   = {0},
-                    frame_delta = {0},
-                    frame_diff = {0};
-
-    struct timespec frame_desired = {
-        .tv_sec = 0,
-        .tv_nsec = NANOSECS_PER_SEC / FPS,
-    };
-
-    u64 sim_tick = 0;
-    u64 net_tick = 0;
-    const f32 dt = time_nanoseconds(&frame_desired) / (f32) NANOSECS_PER_SEC;
     f32 t = 0.0f;
     f32 fps = 0.0f;
+
+    struct frame frame = {
+        .desired_delta = NANOSECONDS(1) / (f32) FPS,
+        .dt = 1.0f / (f32) FPS,
+    };
 
     struct game game = {
         .map = map,
@@ -116,15 +108,15 @@ int main() {
     u8 num_peers = 0;
 
 #if defined(DRAW)
-    InitWindow(WIDTH, HEIGHT, "server");
+    InitWindow(WIDTH, HEIGHT, "floating");
     HideCursor();
 #endif
 
     while (running) {
-        time_current(&frame_start);
+        const u64 frame_start = time_current();
 
         // Handle network
-        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+        if (frame.simulation_tick % NET_PER_SIM_TICKS == 0) {
             while (enet_host_service(server, &event, 0) > 0) {
                 switch (event.type) {
                 case ENET_EVENT_TYPE_CONNECT: {
@@ -174,7 +166,7 @@ int main() {
                         };
 
                         struct server_packet_greeting greeting = {
-                            .initial_net_tick = net_tick,
+                            .initial_net_tick = frame.network_tick,
                             .initial_pos = peers[peer_index].player->pos,
                             .peer_index = peer_index,
                         };
@@ -235,8 +227,11 @@ int main() {
                     assert(peer_index >= 0 && peer_index < MAX_CLIENTS);
                     assert(peers[peer_index].connected);
 
+                    assert(batch->num_packets > 0);
+                    i64 tick = (i64) ((struct client_header *) input_buffer.top)->sim_tick;
+
                     i8 adjustment = 0;
-                    i64 diff = (i64) net_tick + (VALID_TICK_WINDOW-1) - (i64) batch->net_tick;
+                    i64 diff = (i64) frame.simulation_tick + (VALID_TICK_WINDOW-1) - tick;
                     if (diff < INT8_MIN || diff > INT8_MAX) {
                         printf("net_tick diff outside range of adjustment variable!\n");
                         // TODO(anjo): what do?
@@ -246,26 +241,27 @@ int main() {
                         // Need adjustment
                         adjustment = (i8) diff;
                     }
-                    if (batch->net_tick >= net_tick) {
+
+                    {
+                        struct server_batch_header *server_batch = (void *) peers[peer_index].output_buffer.base;
+                        server_batch->adjustment = adjustment;
+                        server_batch->adjustment_iteration = batch->adjustment_iteration;
+                    }
+
+                    if (tick >= frame.simulation_tick) {
                         if (diff < -(VALID_TICK_WINDOW-1)) {
-                            printf("Allowing packet, too late: net_tick %lu, should be >= %lu\n", batch->net_tick, net_tick);
+                            printf("Allowing packet, too late: net_tick %lu, should be >= %lu\n", batch->net_tick, frame.network_tick);
                         }
                     } else {
                         struct server_header response_header = {
                             .type = SERVER_PACKET_DROPPED,
                         };
 
-                        printf("Dropping packet, too early: net_tick %lu, should be >= %lu\n", batch->net_tick, net_tick);
+                        printf("Dropping packet, too early: net_tick %lu, should be >= %lu\n", batch->net_tick, frame.network_tick);
 
                         new_packet(&peers[peer_index]);
                         APPEND(&peers[peer_index].output_buffer, &response_header);
                         break;
-                    }
-
-                    {
-                        struct server_batch_header *server_batch = (void *) peers[peer_index].output_buffer.base;
-                        server_batch->adjustment = adjustment;
-                        server_batch->adjustment_iteration = batch->adjustment_iteration;
                     }
 
                     for (u16 packet = 0; packet < batch->num_packets; ++packet) {
@@ -280,7 +276,7 @@ int main() {
                             struct peer *peer = &peers[peer_index];
                             struct update_log_entry entry = {
                                 .client_sim_tick = header->sim_tick,
-                                .server_net_tick = net_tick,
+                                .server_net_tick = frame.network_tick,
                                 .input_update = *input_update,
                             };
                             CIRCULAR_BUFFER_APPEND(&peer->update_log, entry);
@@ -361,65 +357,64 @@ int main() {
             if (!peers[i].connected)
                 continue;
             struct peer *peer = &peers[i];
-peer_update_log_label:
-            if (peer->update_log.used > 0) {
+
+            while (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
-                if (entry->client_sim_tick < sim_tick) {
-                    printf("%lu, %lu\n", entry->client_sim_tick, sim_tick);
+                if (entry->client_sim_tick < frame.simulation_tick) {
+                    printf("%lu - %lu, %lu\n", peer->update_log.used, entry->client_sim_tick, frame.simulation_tick);
+                } else {
+                    printf("%lu - %lu, %lu\n", peer->update_log.used, entry->client_sim_tick, frame.simulation_tick);
                 }
 
-                // Even though we're sync wrt the network tick, the actual simulation
-                // tick need not be synced, if this happens just apply the packed
-                // immediately
+                if (entry->client_sim_tick > frame.simulation_tick)
+                    break;
 
-                if (entry->client_sim_tick <= sim_tick) {
-                    move(&game, peer->player, &entry->input_update.input, dt, false);
-                    peer->update_processed = true;
+                move(&game, peer->player, &entry->input_update.input, frame.dt, false);
+                peer->update_processed = true;
 
-                    // Send AUTH packet to peer
-                    {
-                        struct server_header response_header = {
-                            .type = SERVER_PACKET_AUTH,
-                        };
+                // Send AUTH packet to peer
+                {
+                    struct server_header response_header = {
+                        .type = SERVER_PACKET_AUTH,
+                    };
 
-                        struct server_packet_auth auth = {
-                            .sim_tick = entry->client_sim_tick,
-                            .player = *peer->player,
-                        };
+                    struct server_packet_auth auth = {
+                        .sim_tick = entry->client_sim_tick,
+                        .player = *peer->player,
+                    };
 
-                        new_packet(peer);
-                        APPEND(&peer->output_buffer, &response_header);
-                        APPEND(&peer->output_buffer, &auth);
-                    }
-
-                    // Send PEER_AUTH packet to all other peers
-                    // TODO(anjo): We are not attaching any adjustment data here
-                    {
-                        struct server_header response_header = {
-                            .type = SERVER_PACKET_PEER_AUTH,
-                        };
-
-                        struct server_packet_peer_auth peer_auth = {
-                            .sim_tick = entry->client_sim_tick,
-                            .player = *peer->player,
-                            .peer_index = i,
-                        };
-
-                        for (u8 j = 0; j < MAX_CLIENTS; ++j) {
-                            if (!peers[j].connected || i == j)
-                                continue;
-                            new_packet(&peers[j]);
-                            APPEND(&peers[j].output_buffer, &response_header);
-                            APPEND(&peers[j].output_buffer, &peer_auth);
-                        }
-                    }
-
-                    CIRCULAR_BUFFER_POP(&peer->update_log);
+                    new_packet(peer);
+                    APPEND(&peer->output_buffer, &response_header);
+                    APPEND(&peer->output_buffer, &auth);
                 }
+
+                // Send PEER_AUTH packet to all other peers
+                // TODO(anjo): We are not attaching any adjustment data here
+                {
+                    struct server_header response_header = {
+                        .type = SERVER_PACKET_PEER_AUTH,
+                    };
+
+                    struct server_packet_peer_auth peer_auth = {
+                        .sim_tick = entry->client_sim_tick,
+                        .player = *peer->player,
+                        .peer_index = i,
+                    };
+
+                    for (u8 j = 0; j < MAX_CLIENTS; ++j) {
+                        if (!peers[j].connected || i == j)
+                            continue;
+                        new_packet(&peers[j]);
+                        APPEND(&peers[j].output_buffer, &response_header);
+                        APPEND(&peers[j].output_buffer, &peer_auth);
+                    }
+                }
+
+                CIRCULAR_BUFFER_POP(&peer->update_log);
             }
         }
 
-        if (sim_tick % NET_PER_SIM_TICKS == 0) {
+        if (frame.simulation_tick % NET_PER_SIM_TICKS == 0) {
             for (u8 i = 0; i < MAX_CLIENTS; ++i) {
                 if (!peers[i].connected)
                     continue;
@@ -446,7 +441,7 @@ peer_update_log_label:
             }
             struct player *player = peers[i].player;
             struct input input = {0};
-            move(&game, player, &input, dt, false);
+            move(&game, player, &input, frame.dt, false);
         }
 
 #if defined(DRAW)
@@ -457,32 +452,31 @@ peer_update_log_label:
         draw_game(&game, t);
 
         DrawText("server", 10, 10, 20, BLACK);
-        if (sim_tick % FPS == 0) {
-            fps = 1.0f / ((f32)time_nanoseconds(&frame_delta)/(f32)NANOSECS_PER_SEC);
+        if (frame.simulation_tick % FPS == 0) {
+            fps = 1.0f / ((f32)frame.delta/(f32)NANOSECONDS(1));
         }
         if (!isinf(fps))
             DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
 
         EndDrawing();
 #else
-        if (sim_tick % FPS == 0) {
-            fps = 1.0f / ((f32)time_nanoseconds(&frame_delta)/(f32)NANOSECS_PER_SEC);
+        if (frame.simulation_tick % FPS == 0) {
+            fps = 1.0f / ((f32)frame.delta/(f32)NANOSECONDS(1));
             if (!isinf(fps))
                 printf("fps: %.0f\n", fps);
         }
 #endif
 
         // End frame
-        time_current(&frame_end);
-        time_subtract(&frame_delta, &frame_end, &frame_start);
-        if (time_less_than(&frame_delta, &frame_desired)) {
-            time_subtract(&frame_diff, &frame_desired, &frame_delta);
-            nanosleep(&frame_diff, NULL);
+        const u64 frame_end = time_current();
+        frame.delta = frame_end - frame_start;
+        if (frame.delta < frame.desired_delta) {
+            time_nanosleep(frame.desired_delta - frame.delta);
         }
-        if (sim_tick % NET_PER_SIM_TICKS == 0)
-            net_tick++;
-        sim_tick++;
-        t += dt;
+        if (frame.simulation_tick % NET_PER_SIM_TICKS == 0)
+            ++frame.network_tick;
+        ++frame.simulation_tick;
+        t += frame.dt;
     }
 
     enet_host_destroy(server);
