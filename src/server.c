@@ -19,7 +19,7 @@
 #define OUTPUT_BUFFER_SIZE 32000
 #define INPUT_BUFFER_LENGTH 16
 #define UPDATE_LOG_BUFFER_SIZE 512
-#define VALID_TICK_WINDOW 5
+#define VALID_TICK_WINDOW 2
 
 bool running = true;
 
@@ -54,6 +54,7 @@ struct peer {
     bool connected;
     bool update_processed;
     struct player *player;
+    u64 player_index;
     struct update_log_buffer update_log;
     struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
@@ -139,8 +140,9 @@ int main() {
                     peers[peer_index].connected = true;
 
                     struct player *player = NULL;
-                    for (u32 i = 0; i < MAX_CLIENTS; ++i) {
-                        player = &game.players[i];
+                    u64 player_index = 0;
+                    for (; player_index < MAX_CLIENTS; ++player_index) {
+                        player = &game.players[player_index];
                         if (!player->occupied)
                             break;
                     }
@@ -150,6 +152,7 @@ int main() {
                     player->pos = (v2) {0, 0};
                     player->hue = 20.0f;
                     peers[peer_index].player = player;
+                    peers[peer_index].player_index = player_index;
 
                     peers[peer_index].enet_peer = event.peer;
                     peers[peer_index].output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
@@ -369,7 +372,7 @@ int main() {
                 if (entry->client_sim_tick > frame.simulation_tick)
                     break;
 
-                move(&game, peer->player, &entry->input_update.input, frame.dt, false);
+                move(&game, peer->player, &entry->input_update.input, frame.dt, peer->player_index, false);
                 peer->update_processed = true;
 
                 // Send AUTH packet to peer
@@ -432,17 +435,17 @@ int main() {
             }
         }
 
-        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-            if (!peers[i].connected)
-                continue;
-            if (peers[i].update_processed) {
-                peers[i].update_processed = false;
-                continue;
-            }
-            struct player *player = peers[i].player;
-            struct input input = {0};
-            move(&game, player, &input, frame.dt, false);
-        }
+        //for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+        //    if (!peers[i].connected)
+        //        continue;
+        //    if (peers[i].update_processed) {
+        //        peers[i].update_processed = false;
+        //        continue;
+        //    }
+        //    struct player *player = peers[i].player;
+        //    struct input input = {0};
+        //    move(&game, player, &input, frame.dt, peers[i].player_index, false);
+        //}
 
 #if defined(DRAW)
         if (IsKeyDown(KEY_Q))

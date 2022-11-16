@@ -258,6 +258,7 @@ static inline void move(struct game *game,
                         struct player *p,
                         struct input *input,
                         const f32 dt,
+                        u64 player_index,
                         bool replaying) {
     const f32 move_acceleration = 0.5f/dt;
     const f32 max_move_speed = 5.0f;
@@ -413,12 +414,9 @@ static inline void move(struct game *game,
             }
         }
 
-        if (replaying)
-            return;
-
         for (i32 i = 0; i < ARRLEN(game->players); ++i) {
             struct player *p0 = &game->players[i];
-            if (!p0->occupied || v2equal(p0->pos, p->pos))
+            if (!p0->occupied || i == player_index)
                 continue;
 
             const f32 radius = 0.25f;
@@ -436,7 +434,7 @@ static inline void move(struct game *game,
             if (v2iszero(result.resolve))
                 continue;
 
-            p->pos = v2add(p->pos, v2scale(1.0f, result.resolve));
+            p->pos = v2add(p->pos, v2scale(-1.0f, result.resolve));
         }
     }
 }

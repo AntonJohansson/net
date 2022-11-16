@@ -43,6 +43,7 @@ struct peer_auth_buffer {
 struct peer {
     bool connected;
     struct player *player;
+    u64 player_index;
     struct peer_auth_buffer auth_buffer;
 };
 
@@ -211,8 +212,9 @@ int main(int argc, char **argv) {
                             peers[main_peer_index].connected = true;
 
                             struct player *player = NULL;
-                            for (u32 i = 0; i < MAX_CLIENTS; ++i) {
-                                player = &game.players[i];
+                            u64 player_index = 0;
+                            for (; player_index < MAX_CLIENTS; ++player_index) {
+                                player = &game.players[player_index];
                                 if (!player->occupied)
                                     break;
                             }
@@ -224,6 +226,7 @@ int main(int argc, char **argv) {
                             player->health = 100.0f;
 
                             peers[main_peer_index].player = player;
+                            peers[main_peer_index].player_index = player_index;
                             ++num_peers;
                             connected = true;
                         } break;
@@ -267,7 +270,7 @@ int main(int argc, char **argv) {
                             u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
                             for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
                                 struct input *old_input = &input_buffer[old_index];
-                                move(&old_game, &old_player, old_input, frame.dt, true);
+                                move(&old_game, &old_player, old_input, frame.dt, peers[main_peer_index].player_index, true);
                             }
 
                             if (!v2equal(player->pos, old_player.pos)) {
@@ -281,7 +284,7 @@ int main(int argc, char **argv) {
                                     u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
                                     for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
                                         struct input *old_input = &input_buffer[old_index];
-                                        move(&old_game, &tmp_player, old_input, frame.dt, true);
+                                        move(&old_game, &tmp_player, old_input, frame.dt, peers[main_peer_index].player_index, true);
                                         printf("    -> {%f, %f}\n", tmp_player.pos.x, tmp_player.pos.y);
                                     }
                                 }
@@ -395,7 +398,7 @@ int main(int argc, char **argv) {
             APPEND(&output_buffer, &update);
 
             // Predictive move
-            move(&game, player, input, frame.dt, false);
+            move(&game, player, input, frame.dt, peers[main_peer_index].player_index, false);
         }
 
         if (run_network_tick) {
