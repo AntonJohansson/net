@@ -40,12 +40,14 @@ struct client_header {
 
 struct server_packet_greeting {
     u64 initial_net_tick;
+    u64 id;
     v2 initial_pos;
     u8 peer_index;
 };
 
 struct server_packet_peer_greeting {
     v2 initial_pos;
+    u64 id;
     f32 health;
     u8 peer_index;
 };

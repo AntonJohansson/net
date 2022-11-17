@@ -52,9 +52,7 @@ struct update_log_buffer {
 
 struct peer {
     bool connected;
-    bool update_processed;
     struct player *player;
-    u64 player_index;
     struct update_log_buffer update_log;
     struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
@@ -139,20 +137,11 @@ int main() {
 
                     peers[peer_index].connected = true;
 
-                    struct player *player = NULL;
-                    u64 player_index = 0;
-                    for (; player_index < MAX_CLIENTS; ++player_index) {
-                        player = &game.players[player_index];
-                        if (!player->occupied)
-                            break;
-                    }
-
-                    assert(player != NULL);
-                    player->occupied = true;
-                    player->pos = (v2) {0, 0};
-                    player->hue = 20.0f;
-                    peers[peer_index].player = player;
-                    peers[peer_index].player_index = player_index;
+                    const u64 id = player_id();
+                    struct player *p = allocate_player(&game, id);
+                    p->pos = (v2) {0, 0};
+                    p->hue = 20.0f;
+                    peers[peer_index].player = p;
 
                     peers[peer_index].enet_peer = event.peer;
                     peers[peer_index].output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
@@ -170,6 +159,7 @@ int main() {
 
                         struct server_packet_greeting greeting = {
                             .initial_net_tick = frame.network_tick,
+                            .id = id,
                             .initial_pos = peers[peer_index].player->pos,
                             .peer_index = peer_index,
                         };
@@ -187,6 +177,7 @@ int main() {
 
                         struct server_packet_peer_greeting greeting = {
                             .initial_pos = peers[peer_index].player->pos,
+                            .id = id,
                             .health = peers[peer_index].player->health,
                             .peer_index = peer_index,
                         };
@@ -363,17 +354,11 @@ int main() {
 
             while (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
-                if (entry->client_sim_tick < frame.simulation_tick) {
-                    printf("%lu - %lu, %lu\n", peer->update_log.used, entry->client_sim_tick, frame.simulation_tick);
-                } else {
-                    printf("%lu - %lu, %lu\n", peer->update_log.used, entry->client_sim_tick, frame.simulation_tick);
-                }
-
                 if (entry->client_sim_tick > frame.simulation_tick)
                     break;
 
-                move(&game, peer->player, &entry->input_update.input, frame.dt, peer->player_index, false);
-                peer->update_processed = true;
+                move(&game, peer->player, &entry->input_update.input, frame.dt, false);
+                collect_and_resolve_static_collisions(&game);
 
                 // Send AUTH packet to peer
                 {
@@ -415,6 +400,11 @@ int main() {
 
                 CIRCULAR_BUFFER_POP(&peer->update_log);
             }
+
+            //struct collision_result results[16] = {0};
+            //u32 num_results = 0;
+            //collect_dynamic_collisions(&game, results, &num_results, 16);
+            //resolve_dynamic_collisions(&game, results, num_results);
         }
 
         if (frame.simulation_tick % NET_PER_SIM_TICKS == 0) {
@@ -434,18 +424,6 @@ int main() {
                 }
             }
         }
-
-        //for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-        //    if (!peers[i].connected)
-        //        continue;
-        //    if (peers[i].update_processed) {
-        //        peers[i].update_processed = false;
-        //        continue;
-        //    }
-        //    struct player *player = peers[i].player;
-        //    struct input input = {0};
-        //    move(&game, player, &input, frame.dt, peers[i].player_index, false);
-        //}
 
 #if defined(DRAW)
         if (IsKeyDown(KEY_Q))

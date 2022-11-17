@@ -43,7 +43,6 @@ struct peer_auth_buffer {
 struct peer {
     bool connected;
     struct player *player;
-    u64 player_index;
     struct peer_auth_buffer auth_buffer;
 };
 
@@ -211,22 +210,12 @@ int main(int argc, char **argv) {
                             assert(!peers[main_peer_index].connected);
                             peers[main_peer_index].connected = true;
 
-                            struct player *player = NULL;
-                            u64 player_index = 0;
-                            for (; player_index < MAX_CLIENTS; ++player_index) {
-                                player = &game.players[player_index];
-                                if (!player->occupied)
-                                    break;
-                            }
+                            struct player *p = allocate_player(&game, greeting->id);
+                            p->pos = greeting->initial_pos;
+                            p->hue = 50.0f;
+                            p->health = 100.0f;
 
-                            assert(player != NULL);
-                            player->occupied = true;
-                            player->pos = greeting->initial_pos;
-                            player->hue = 50.0f;
-                            player->health = 100.0f;
-
-                            peers[main_peer_index].player = player;
-                            peers[main_peer_index].player_index = player_index;
+                            peers[main_peer_index].player = p;
                             ++num_peers;
                             connected = true;
                         } break;
@@ -237,20 +226,12 @@ int main(int argc, char **argv) {
 
                             u8 peer_index = greeting->peer_index;
 
-                            struct player *player = NULL;
-                            for (u32 i = 0; i < MAX_CLIENTS; ++i) {
-                                player = &game.players[i];
-                                if (!player->occupied)
-                                    break;
-                            }
+                            struct player *p = allocate_player(&game, greeting->id);
+                            p->pos = greeting->initial_pos;
+                            p->hue = 20.0f;
+                            p->health = greeting->health;
 
-                            assert(player != NULL);
-                            player->occupied = true;
-                            player->pos = greeting->initial_pos;
-                            player->hue = 20.0f;
-                            player->health = greeting->health;
-
-                            peers[peer_index].player = player;
+                            peers[peer_index].player = p;
                             ++num_peers;
                         } break;
 
@@ -270,24 +251,27 @@ int main(int argc, char **argv) {
                             u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
                             for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
                                 struct input *old_input = &input_buffer[old_index];
-                                move(&old_game, &old_player, old_input, frame.dt, peers[main_peer_index].player_index, true);
+                                move(&old_game, &old_player, old_input, frame.dt, true);
+                                // CONTHERE: Currently not applying resolve correctly to old_player.
+                                // How do we deal with collisions against other players here?
+                                collect_and_resolve_static_collisions(&old_game);
                             }
 
                             if (!v2equal(player->pos, old_player.pos)) {
-                                {
-                                    printf("  Replaying %lu inputs from %lu+1 to %lu-1\n", diff, auth->sim_tick, frame.simulation_tick);
-                                    printf("    Starting from {%f, %f}\n", auth->player.pos.x, auth->player.pos.y);
-                                    printf("    Should match {%f, %f}\n", player->pos.x, player->pos.y);
+                                //{
+                                //    printf("  Replaying %lu inputs from %lu+1 to %lu-1\n", diff, auth->sim_tick, frame.simulation_tick);
+                                //    printf("    Starting from {%f, %f}\n", auth->player.pos.x, auth->player.pos.y);
+                                //    printf("    Should match {%f, %f}\n", player->pos.x, player->pos.y);
 
-                                    struct game old_game = game;
-                                    struct player tmp_player = auth->player;
-                                    u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
-                                    for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
-                                        struct input *old_input = &input_buffer[old_index];
-                                        move(&old_game, &tmp_player, old_input, frame.dt, peers[main_peer_index].player_index, true);
-                                        printf("    -> {%f, %f}\n", tmp_player.pos.x, tmp_player.pos.y);
-                                    }
-                                }
+                                //    struct game old_game = game;
+                                //    struct player tmp_player = auth->player;
+                                //    u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
+                                //    for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
+                                //        struct input *old_input = &input_buffer[old_index];
+                                //        move(&old_game, &tmp_player, old_input, frame.dt, true);
+                                //        printf("    -> {%f, %f}\n", tmp_player.pos.x, tmp_player.pos.y);
+                                //    }
+                                //}
 
                                 printf("  Server disagreed! {%f, %f} vs {%f, %f}\n", player->pos.x, player->pos.y, old_player.pos.x, old_player.pos.y);
                                 *player = auth->player;
@@ -398,7 +382,8 @@ int main(int argc, char **argv) {
             APPEND(&output_buffer, &update);
 
             // Predictive move
-            move(&game, player, input, frame.dt, peers[main_peer_index].player_index, false);
+            move(&game, player, input, frame.dt, false);
+            collect_and_resolve_static_collisions(&game);
         }
 
         if (run_network_tick) {

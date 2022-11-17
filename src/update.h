@@ -38,6 +38,8 @@ enum player_state {
 struct player {
     bool occupied;
 
+    u64 id;
+
     v2 pos;
     v2 velocity;
 
@@ -74,6 +76,36 @@ struct game {
     struct map map;
     struct player players[MAX_CLIENTS];
 };
+
+static inline struct player *allocate_player(struct game *g, u64 id) {
+    struct player *p = NULL;
+    for (u32 i = 0; i < ARRLEN(g->players); ++i) {
+        p = &g->players[i];
+        if (!p->occupied)
+            break;
+    }
+
+    assert(p != NULL);
+    p->occupied = true;
+    p->id = id;
+
+    return p;
+}
+
+static inline struct player *lookup_player(struct game *g, u64 id) {
+    for (u32 i = 0; i < ARRLEN(g->players); ++i) {
+        struct player *p = &g->players[i];
+        if (p->occupied && p->id == id)
+            return p;
+    }
+
+    return NULL;
+}
+
+static inline u64 player_id() {
+    static u64 id = 0;
+    return id++;
+}
 
 static inline bool map_coord_in_bounds(const struct map *map, i32 i, i32 j) {
     return i >= 0 && i <= map->width &&
@@ -123,6 +155,8 @@ static inline f32 clamp(f32 x, f32 a, f32 b) {
 }
 
 struct collision_result {
+    u64 id0;
+    u64 id1;
     bool colliding;
     v2 resolve;
 };
@@ -254,20 +288,19 @@ static void raycast(struct game *game, v2 pos, v2 dir, const f32 dt, v2 *res) {
     assert(false);
 }
 
+static const f32 dodge_delay_time = 1.0f;
+
 static inline void move(struct game *game,
                         struct player *p,
                         struct input *input,
                         const f32 dt,
-                        u64 player_index,
                         bool replaying) {
     const f32 move_acceleration = 0.5f/dt;
     const f32 max_move_speed = 5.0f;
-
     const f32 dodge_acceleration = 1.0f/dt;
     const f32 dodge_deceleration = 0.10f/dt;
     const f32 max_dodge_speed = 10.0f;
     const f32 dodge_time = 0.10f;
-    const f32 dodge_delay_time = 1.0f;
 
     p->look = v2normalize((v2) {input->x, input->y});
 
@@ -291,8 +324,6 @@ static inline void move(struct game *game,
         p->velocity = v2scale(speed, p->dodge);
     }
 
-    bool has_moved = false;
-
     // Dodge movement
     if (p->state == PLAYER_STATE_SLIDING) {
         if (p->time_left_in_dodge > 0.0f) {
@@ -301,8 +332,6 @@ static inline void move(struct game *game,
             if (speed > max_dodge_speed) {
                 p->velocity = v2scale(max_dodge_speed, v2normalize(p->velocity));
             }
-
-            has_moved = true;
 
             p->time_left_in_dodge -= dt;
             if (p->time_left_in_dodge <= 0.0f) {
@@ -359,23 +388,26 @@ static inline void move(struct game *game,
     // "Integrate" velocity
     if (!v2iszero(p->velocity)) {
         p->pos = v2add(p->pos, v2scale(dt, p->velocity));
-        has_moved = true;
     }
+}
 
-    // Handle collisions
-    if (has_moved) {
-        const v2 tile_offsets[8] = {
-            {+1,  0},
-            {+1, -1},
-            { 0, -1},
-            {-1, -1},
-            {-1,  0},
-            {-1, +1},
-            { 0, +1},
-            {+1, +1},
-        };
+static inline void collect_and_resolve_static_collisions(struct game *game) {
+    const v2 tile_offsets[8] = {
+        {+1,  0},
+        {+1, -1},
+        { 0, -1},
+        {-1, -1},
+        {-1,  0},
+        {-1, +1},
+        { 0, +1},
+        {+1, +1},
+    };
 
-        for (i32 i = 0; i < ARRLEN(tile_offsets); ++i) {
+    for (u32 j = 0; j < ARRLEN(game->players); ++j) {
+        struct player *p = &game->players[j];
+        if (!p->occupied)
+            continue;
+        for (u32 i = 0; i < ARRLEN(tile_offsets); ++i) {
             const v2 at = v2add(p->pos, v2scale(game->map.tile_size, tile_offsets[i]));
             const u8 tile = map_at(&game->map, at);
             if (tile != TILE_STONE)
@@ -400,6 +432,7 @@ static inline void move(struct game *game,
 
             p->pos = v2add(p->pos, result.resolve);
 
+            bool in_dodge = p->state == PLAYER_STATE_SLIDING;
             if (in_dodge) {
                 f32 dot = v2dot(p->dodge, v2normalize(result.resolve));
                 // resolve and dodge should be pointing in opposite directions.
@@ -413,20 +446,31 @@ static inline void move(struct game *game,
                 }
             }
         }
+    }
+}
 
-        for (i32 i = 0; i < ARRLEN(game->players); ++i) {
-            struct player *p0 = &game->players[i];
-            if (!p0->occupied || i == player_index)
+static inline void collect_dynamic_collisions(struct game *game,
+                                             struct collision_result *results,
+                                             u32 *num_results,
+                                             u32 max_results) {
+    *num_results = 0;
+    for (i32 i = 0; i < ARRLEN(game->players); ++i) {
+        struct player *p0 = &game->players[i];
+        if (!p0->occupied)
+            continue;
+        for (i32 j = i+1; j < ARRLEN(game->players); ++j) {
+            struct player *p1 = &game->players[j];
+            if (!p1->occupied)
                 continue;
 
             const f32 radius = 0.25f;
             struct collision_result result = collide_circle_circle((struct circle) {
-                                                                   .pos = p->pos,
-                                                                   .radius = radius
+                                                                       .pos = p0->pos,
+                                                                       .radius = radius
                                                                    },
                                                                    (struct circle) {
-                                                                   .pos = p0->pos,
-                                                                   .radius = radius
+                                                                       .pos = p1->pos,
+                                                                       .radius = radius
                                                                    });
             if (!result.colliding)
                 continue;
@@ -434,7 +478,24 @@ static inline void move(struct game *game,
             if (v2iszero(result.resolve))
                 continue;
 
-            p->pos = v2add(p->pos, v2scale(-1.0f, result.resolve));
+            result.id0 = p0->id;
+            result.id1 = p1->id;
+
+            results[(*num_results)++] = result;
+            if (*num_results >= max_results)
+                return;
         }
+    }
+}
+
+static inline void resolve_dynamic_collisions(struct game *game,
+                                              struct collision_result *results,
+                                              u32 num_results) {
+    for (u32 i = 0; i < num_results; ++i) {
+        struct collision_result *result = &results[i];
+        struct player *p0 = lookup_player(game, result->id0);
+        struct player *p1 = lookup_player(game, result->id1);
+        p0->pos = v2add(p0->pos, v2scale(-0.5f, result->resolve));
+        p1->pos = v2add(p1->pos, v2scale(+0.5f, result->resolve));
     }
 }
