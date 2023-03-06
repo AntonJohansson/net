@@ -36,20 +36,19 @@ static void graph_append(struct graph *g, f32 y) {
     g->top = (g->top + 1) % g->size;
 }
 
+struct camera {
+    v2 offset;
+    v2 target;
+};
+
 struct player;
 struct map;
 struct game;
 
-Vector2 screen_to_world(Vector2 v);
+v2 screen_to_world(struct camera c, Vector2 v);
 
 void debug_v2(v2 pos, v2 v, f32 scale, Color color);
-void draw_all_debug_v2s();
+void draw_all_debug_v2s(struct camera c);
 
-void draw_centered_line(v2 start, v2 end, f32 thickness, Color color);
-void draw_v2(v2 pos, v2 v, f32 scale, Color color);
-void draw_tile(f32 x, f32 y, f32 border_thickness, Color light, Color dark);
-void draw_water(f32 t);
-void draw_map(const struct map *map);
-void draw_player(struct player *p);
-void draw_game(struct game *game, const f32 t);
+void draw_game(struct camera c, struct game *game, const f32 t);
 void draw_graph(struct graph *g, v2 pos, v2 size, v2 margin);

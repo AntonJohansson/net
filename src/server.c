@@ -2,6 +2,7 @@
 #include "enet.h"
 #include "packet.h"
 #include "common.h"
+#include "random.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -19,7 +20,7 @@
 #define OUTPUT_BUFFER_SIZE 32000
 #define INPUT_BUFFER_LENGTH 16
 #define UPDATE_LOG_BUFFER_SIZE 512
-#define VALID_TICK_WINDOW 2
+#define VALID_TICK_WINDOW 5
 
 bool running = true;
 
@@ -70,6 +71,18 @@ static inline void new_packet(struct peer *p) {
     ++batch->num_packets;
 }
 
+static inline void randomize_player_spawn(struct random_series_pcg random, struct map m, struct player *p) {
+
+retry:;
+
+    f32 x = m.width  * random_next_unilateral(&random);
+    f32 y = m.height * random_next_unilateral(&random);
+    if (map_at(&m, (v2){x,y}) == TILE_STONE)
+        goto retry;
+    p->pos.x = x;
+    p->pos.y = y;
+}
+
 int main() {
     if (enet_initialize() != 0) {
         printf("An error occurred while initializing ENet.\n");
@@ -106,6 +119,8 @@ int main() {
     struct peer peers[MAX_CLIENTS] = {0};
     u8 num_peers = 0;
 
+    struct random_series_pcg random = random_seed_pcg(0x9053, 0x9005);
+
 #if defined(DRAW)
     InitWindow(WIDTH, HEIGHT, "floating");
     HideCursor();
@@ -139,7 +154,8 @@ int main() {
 
                     const u64 id = player_id();
                     struct player *p = allocate_player(&game, id);
-                    p->pos = (v2) {0, 0};
+                    //randomize_player_spawn(random, game.map, p);
+                    p->pos = (v2){2,2};
                     p->hue = 20.0f;
                     peers[peer_index].player = p;
 
@@ -430,7 +446,7 @@ int main() {
             running = false;
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        draw_game(&game, t);
+        //draw_game(&game, t);
 
         DrawText("server", 10, 10, 20, BLACK);
         if (frame.simulation_tick % FPS == 0) {

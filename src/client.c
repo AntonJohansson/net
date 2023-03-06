@@ -57,6 +57,8 @@ static inline void new_packet(struct byte_buffer *output_buffer) {
     ++batch->num_packets;
 }
 
+struct camera camera = {0};
+
 void client_handle_input(struct player *p, struct input *input) {
     if (IsKeyDown(KEY_W))
         input->active[INPUT_MOVE_UP] = true;
@@ -73,11 +75,14 @@ void client_handle_input(struct player *p, struct input *input) {
     if (IsKeyDown(KEY_Q))
         input->active[INPUT_QUIT] = true;
 
-    Vector2 v = screen_to_world((Vector2) {GetMouseX(), GetMouseY()});
-    input->x = v.x - p->pos.x;
-    input->y = v.y - p->pos.y;
-}
+    v2 v = screen_to_world(camera, (Vector2) {GetMouseX(), GetMouseY()});
+    input->look = v2sub(v, p->pos);
 
+    if (v2iszero(input->look)) {
+        input->look.x = 1;
+        input->look.y = 0;
+    }
+}
 
 int main(int argc, char **argv) {
     assert(argc > 1);
@@ -174,7 +179,6 @@ int main(int argc, char **argv) {
             ++adjustment;
         } else if (adjustment > 0) {
             sleep_this_frame = false;
-            printf("not sleeping\n");
             --adjustment;
         }
         if (run_network_tick) {
@@ -252,9 +256,7 @@ int main(int argc, char **argv) {
                             for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
                                 struct input *old_input = &input_buffer[old_index];
                                 move(&old_game, &old_player, old_input, frame.dt, true);
-                                // CONTHERE: Currently not applying resolve correctly to old_player.
-                                // How do we deal with collisions against other players here?
-                                collect_and_resolve_static_collisions(&old_game);
+                                collect_and_resolve_static_collisions_for_player(&old_game, &old_player);
                             }
 
                             if (!v2equal(player->pos, old_player.pos)) {
@@ -405,9 +407,10 @@ int main(int argc, char **argv) {
 
         // Render
         BeginDrawing();
-        ClearBackground(RAYWHITE);
+        ClearBackground(BLACK);
         if (connected) {
-            draw_game(&game, t);
+            camera.target = player->pos;
+            draw_game(camera, &game, t);
 
             DrawText("client", 10, 10, 20, BLACK);
             if (frame.simulation_tick % FPS == 0) {
@@ -419,7 +422,7 @@ int main(int argc, char **argv) {
             }
 
             graph_append(&graph, v2len(player->velocity));
-            draw_all_debug_v2s();
+            draw_all_debug_v2s(camera);
             draw_graph(&graph,
                        (v2) {10, 80},
                        (v2) {300, 200},

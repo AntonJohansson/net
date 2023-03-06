@@ -25,8 +25,7 @@ enum input_type {
 };
 
 struct input {
-    f32 x;
-    f32 y;
+    v2 look;
     bool active[INPUT_LAST];
 };
 
@@ -302,7 +301,7 @@ static inline void move(struct game *game,
     const f32 max_dodge_speed = 10.0f;
     const f32 dodge_time = 0.10f;
 
-    p->look = v2normalize((v2) {input->x, input->y});
+    p->look = v2normalize(input->look);
 
     if (p->time_left_in_dodge_delay > 0.0f) {
         p->time_left_in_dodge_delay -= dt;
@@ -391,7 +390,7 @@ static inline void move(struct game *game,
     }
 }
 
-static inline void collect_and_resolve_static_collisions(struct game *game) {
+static inline void collect_and_resolve_static_collisions_for_player(struct game *game, struct player *p) {
     const v2 tile_offsets[8] = {
         {+1,  0},
         {+1, -1},
@@ -403,49 +402,53 @@ static inline void collect_and_resolve_static_collisions(struct game *game) {
         {+1, +1},
     };
 
+    for (u32 i = 0; i < ARRLEN(tile_offsets); ++i) {
+        const v2 at = v2add(p->pos, v2scale(game->map.tile_size, tile_offsets[i]));
+        const u8 tile = map_at(&game->map, at);
+        if (tile != TILE_STONE)
+            continue;
+
+        // TODO(anjo): Get collision shape from player instead!
+        const f32 radius = 0.25f;
+        struct collision_result result = collide_rect_circle((struct rectangle) {
+                                                             .pos = {floorf(at.x), floorf(at.y)},
+                                                             .width = game->map.tile_size,
+                                                             .height = game->map.tile_size,
+                                                             },
+                                                             (struct circle) {
+                                                             .pos = p->pos,
+                                                             .radius = radius,
+                                                             });
+        if (!result.colliding)
+            continue;
+
+        if (v2iszero(result.resolve))
+            continue;
+
+        p->pos = v2add(p->pos, result.resolve);
+
+        bool in_dodge = p->state == PLAYER_STATE_SLIDING;
+        if (in_dodge) {
+            f32 dot = v2dot(p->dodge, v2normalize(result.resolve));
+            // resolve and dodge should be pointing in opposite directions.
+            // If the dot product is <= -0.5f the relative direction between
+            // the vectors should >= 90+45 deg, we choose -0.6f to be a bit
+            // more lenient, feels a bit better.
+            if (dot <= -0.6f) {
+                p->state = PLAYER_STATE_DEFAULT;
+                p->time_left_in_dodge = 0.0f;
+                p->time_left_in_dodge_delay = dodge_delay_time;
+            }
+        }
+    }
+}
+
+static inline void collect_and_resolve_static_collisions(struct game *game) {
     for (u32 j = 0; j < ARRLEN(game->players); ++j) {
         struct player *p = &game->players[j];
         if (!p->occupied)
             continue;
-        for (u32 i = 0; i < ARRLEN(tile_offsets); ++i) {
-            const v2 at = v2add(p->pos, v2scale(game->map.tile_size, tile_offsets[i]));
-            const u8 tile = map_at(&game->map, at);
-            if (tile != TILE_STONE)
-                continue;
-
-            // TODO(anjo): Get collision shape from player instead!
-            const f32 radius = 0.25f;
-            struct collision_result result = collide_rect_circle((struct rectangle) {
-                                                                 .pos = {floorf(at.x), floorf(at.y)},
-                                                                 .width = game->map.tile_size,
-                                                                 .height = game->map.tile_size,
-                                                                 },
-                                                                 (struct circle) {
-                                                                 .pos = p->pos,
-                                                                 .radius = radius,
-                                                                 });
-            if (!result.colliding)
-                continue;
-
-            if (v2iszero(result.resolve))
-                continue;
-
-            p->pos = v2add(p->pos, result.resolve);
-
-            bool in_dodge = p->state == PLAYER_STATE_SLIDING;
-            if (in_dodge) {
-                f32 dot = v2dot(p->dodge, v2normalize(result.resolve));
-                // resolve and dodge should be pointing in opposite directions.
-                // If the dot product is <= -0.5f the relative direction between
-                // the vectors should >= 90+45 deg, we choose -0.6f to be a bit
-                // more lenient, feels a bit better.
-                if (dot <= -0.6f) {
-                    p->state = PLAYER_STATE_DEFAULT;
-                    p->time_left_in_dodge = 0.0f;
-                    p->time_left_in_dodge_delay = dodge_delay_time;
-                }
-            }
-        }
+        collect_and_resolve_static_collisions_for_player(game, p);
     }
 }
 
