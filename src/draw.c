@@ -17,8 +17,8 @@ static inline Vector2 world_to_screen(struct camera c, v2 v) {
     const f32 height = (f32) GetScreenHeight();
     Vector2 scale = get_scale();
     return (Vector2) {
-        .x = width  * (v.x/scale.x + 0.5f),
-        .y = height * (v.y/scale.y + 0.5f)
+        .x = width  * ((v.x + c.target.x)/scale.x + 0.5f),
+        .y = height * ((v.y + c.target.y)/scale.y + 0.5f)
     };
 }
 
