@@ -71,12 +71,11 @@ static inline void new_packet(struct peer *p) {
     ++batch->num_packets;
 }
 
-static inline void randomize_player_spawn(struct random_series_pcg random, struct map m, struct player *p) {
-
+static inline void randomize_player_spawn(struct random_series_pcg *random, struct map m, struct player *p) {
 retry:;
 
-    f32 x = m.width  * random_next_unilateral(&random);
-    f32 y = m.height * random_next_unilateral(&random);
+    f32 x = m.width  * random_next_unilateral(random);
+    f32 y = m.height * random_next_unilateral(random);
     if (map_at(&m, (v2){x,y}) == TILE_STONE)
         goto retry;
     p->pos.x = x;
@@ -154,8 +153,7 @@ int main() {
 
                     const u64 id = player_id();
                     struct player *p = allocate_player(&game, id);
-                    //randomize_player_spawn(random, game.map, p);
-                    p->pos = (v2){2,2};
+                    randomize_player_spawn(&random, game.map, p);
                     p->hue = 20.0f;
                     peers[peer_index].player = p;
 

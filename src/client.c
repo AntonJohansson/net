@@ -84,57 +84,15 @@ void client_handle_input(struct player *p, struct input *input) {
     }
 }
 
-int main(int argc, char **argv) {
-    assert(argc > 1);
-    const char *ip = argv[1];
+typedef enum MenuState {
+    START,
+    CONNECTING,
+    LOBBY,
+    GAME,
+} MenuState;
 
-    struct byte_buffer output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
 
-    {
-        struct client_batch_header batch = {0};
-        APPEND(&output_buffer, &batch);
-    }
-
-    if (enet_initialize() != 0) {
-        fprintf(stderr, "An error occurred while initializing ENet.\n");
-        return EXIT_FAILURE;
-    }
-
-    ENetHost *client = {0};
-    client = enet_host_create(NULL, 1, 1, 0, 0);
-    if (client == NULL) {
-        fprintf(stderr, "An error occurred while trying to create an ENet client host.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    ENetAddress address = {0};
-    ENetEvent event = {0};
-    ENetPeer *peer = {0};
-    enet_address_set_host(&address, ip);
-    address.port = 9053;
-
-    peer = enet_host_connect(client, &address, 2, 0);
-    if (peer == NULL) {
-        fprintf(stderr, "No available peers for initiating an ENet connection.\n");
-        exit(EXIT_FAILURE);
-    }
-    /* Wait up to 5 seconds for the connection attempt to succeed. */
-    if (enet_host_service(client, &event, 5000) > 0 &&
-        event.type == ENET_EVENT_TYPE_CONNECT) {
-        puts("Connection to server succeeded.");
-    } else {
-        /* Either the 5 seconds are up or a disconnect event was */
-        /* received. Reset the peer in the event the 5 seconds   */
-        /* had run out without any significant event.            */
-        enet_peer_reset(peer);
-        puts("Connection to server failed.");
-        exit(EXIT_FAILURE);
-    }
-
-    InitWindow(WIDTH, HEIGHT, "floating");
-    SetWindowState(FLAG_WINDOW_RESIZABLE);
-    HideCursor();
-
+static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buffer) {
     struct graph graph = graph_new(2*FPS);
 
     struct timespec frame_start = {0},
@@ -166,6 +124,8 @@ int main(int argc, char **argv) {
     };
 
     bool automove = false;
+
+    ENetEvent event = {0};
 
     while (running) {
         // Begin frame
@@ -409,24 +369,25 @@ int main(int argc, char **argv) {
         BeginDrawing();
         ClearBackground(BLACK);
         if (connected) {
+            camera.offset = (v2) {GetScreenWidth()/2, GetScreenHeight()/2};
             camera.target = player->pos;
             draw_game(camera, &game, t);
 
-            DrawText("client", 10, 10, 20, BLACK);
-            if (frame.simulation_tick % FPS == 0) {
-                fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
-            }
-            if (!isinf(fps)) {
-                DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
-                DrawText(TextFormat("ping: %f", frame.dt * 1000.0f * NET_PER_SIM_TICKS * (f32) (-total_adjustment)), 10, 50, 20, GRAY);
-            }
+            //DrawText("client", 10, 10, 20, BLACK);
+            //if (frame.simulation_tick % FPS == 0) {
+            //    fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
+            //}
+            //if (!isinf(fps)) {
+            //    DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
+            //    DrawText(TextFormat("ping: %f", frame.dt * 1000.0f * NET_PER_SIM_TICKS * (f32) (-total_adjustment)), 10, 50, 20, GRAY);
+            //}
 
-            graph_append(&graph, v2len(player->velocity));
-            draw_all_debug_v2s(camera);
-            draw_graph(&graph,
-                       (v2) {10, 80},
-                       (v2) {300, 200},
-                       (v2) {10, 10});
+            //graph_append(&graph, v2len(player->velocity));
+            //draw_all_debug_v2s(camera);
+            //draw_graph(&graph,
+            //           (v2) {10, 80},
+            //           (v2) {300, 200},
+            //           (v2) {10, 10});
         }
         EndDrawing();
 
@@ -444,6 +405,156 @@ int main(int argc, char **argv) {
             ++frame.network_tick;
         ++frame.simulation_tick;
         t += frame.dt;
+    }
+
+    graph_free(&graph);
+}
+
+int main(int argc, char **argv) {
+    struct byte_buffer output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
+
+    {
+        struct client_batch_header batch = {0};
+        APPEND(&output_buffer, &batch);
+    }
+
+    if (enet_initialize() != 0) {
+        fprintf(stderr, "An error occurred while initializing ENet.\n");
+        return EXIT_FAILURE;
+    }
+
+    InitWindow(WIDTH, HEIGHT, "floating");
+    SetWindowState(FLAG_WINDOW_RESIZABLE);
+    HideCursor();
+    draw_init();
+
+    MenuState menu_state = START;
+
+    // Text input
+    char input[16] = {0};
+    u8 input_size = 0;
+    u64 delete_start = 0;
+    u64 cursor_blink_start = 0;
+    bool draw_cursor = true;
+
+    // If we have a first argument, assume it's an ip
+    // and connect to it, skipping the intial input
+    // menu state.
+    if (argc > 1) {
+        strncpy(input, argv[1], ARRLEN(input));
+        menu_state = CONNECTING;
+    }
+
+    // Net stuff
+    ENetHost *client = {0};
+    client = enet_host_create(NULL, 1, 1, 0, 0);
+    if (client == NULL) {
+        fprintf(stderr, "An error occurred while trying to create an ENet client host.\n");
+        exit(EXIT_FAILURE);
+    }
+    ENetAddress address = {0};
+    ENetEvent event = {0};
+    ENetPeer *peer = {0};
+    address.port = 9053;
+
+    while (!WindowShouldClose()) {
+        switch (menu_state) {
+        case START: {
+            const int w = GetScreenWidth();
+            const int h = GetScreenHeight();
+
+            BeginDrawing();
+            ClearBackground(BLACK);
+
+            int key = GetCharPressed();
+            if (key >= 32 && key <= 125 && input_size < ARRLEN(input)-1) {
+                input[input_size++] = key;
+                input[input_size] = '\0';
+            }
+
+            if (IsKeyDown(KEY_BACKSPACE) && input_size > 0) {
+                const u64 current = time_current();
+                if (current - delete_start >= 50000000) {
+                    delete_start = current;
+                    input[--input_size] = '\0';
+                }
+            }
+
+            DrawText(TextFormat("ip: %s", input), 0.1f * (float)w, 0.4f * (float)h, 20, WHITE);
+            const char *str = TextFormat("ip: %s", input);
+
+            {
+                const u64 current = time_current();
+                if (current - cursor_blink_start >= 1000000000) {
+                    cursor_blink_start = current;
+                    draw_cursor = !draw_cursor;
+                }
+            }
+
+            if (draw_cursor) {
+                DrawRectangle(0.11f * (float)w + MeasureText(str, 20),
+                              0.4f * (float)h,
+                              10,
+                              20,
+                              WHITE);
+            }
+
+            if (IsKeyPressed(KEY_ENTER)) {
+                menu_state = CONNECTING;
+            }
+
+            DrawText("Press [ENTER] to connect", 0.1f * (float)w, 0.50f * (float)h, 20, WHITE);
+            DrawText("Press [ESC] to quit",      0.1f * (float)w, 0.55f * (float)h, 20, WHITE);
+
+            EndDrawing();
+        } break;
+
+        case CONNECTING: {
+            const int w = GetScreenWidth();
+            const int h = GetScreenHeight();
+
+            // Draw something so the user know something is going on
+            // even tho the program will hang when connecting.
+            BeginDrawing();
+            ClearBackground(BLACK);
+            DrawText("Connecting...", 0.1f * (float)w, 0.4f * (float)h, 20, WHITE);
+            EndDrawing();
+
+            enet_address_set_host(&address, input);
+            peer = enet_host_connect(client, &address, 2, 0);
+            if (peer == NULL) {
+                fprintf(stderr, "No available peers for initiating an ENet connection.\n");
+                exit(EXIT_FAILURE);
+            }
+            /* Wait up to 5 seconds for the connection attempt to succeed. */
+            if (enet_host_service(client, &event, 5000) > 0 &&
+                event.type == ENET_EVENT_TYPE_CONNECT) {
+                menu_state = GAME;
+            } else {
+                // In the event that connection failed let's just draw some
+                // text and wait a second
+                BeginDrawing();
+                ClearBackground(BLACK);
+                DrawText("Failed to connect to server", 0.1f * (float)w, 0.4f * (float)h, 20, RED);
+                EndDrawing();
+                time_nanosleep(NANOSECONDS(2));
+
+                /* Either the 5 seconds are up or a disconnect event was */
+                /* received. Reset the peer in the event the 5 seconds   */
+                /* had run out without any significant event.            */
+                enet_peer_reset(peer);
+                menu_state = START;
+            }
+        } break;
+
+        case LOBBY: {
+        } break;
+
+        case GAME: {
+            game(client, peer, output_buffer);
+        } break;
+
+        }
     }
 
     enet_peer_disconnect(peer, 0);
@@ -472,8 +583,8 @@ int main(int argc, char **argv) {
     enet_host_destroy(client);
     enet_deinitialize();
 
+    draw_deinit();
     CloseWindow();
-    graph_free(&graph);
     byte_buffer_free(&output_buffer);
 
     return 0;

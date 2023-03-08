@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include <stdio.h>
+#include <raylib.h>
 
 typedef int8_t   i8;
 typedef uint8_t  u8;
@@ -53,7 +54,10 @@ static inline u64 time_current() {
 }
 
 static inline void time_nanosleep(u64 t) {
-    nanosleep(&(struct timespec) { .tv_nsec = t }, NULL);
+    // HERE
+    //nanosleep(&(struct timespec) { .tv_nsec = t }, NULL);
+    f64 s = (f64)t / 1000000000.0;
+    WaitTime(s);
 }
 
 //

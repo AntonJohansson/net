@@ -146,7 +146,7 @@ static struct map map = {
     .width = 16,
     .height = 16,
     .tile_size = 1.0f,
-    .origin = {-8.0f, -8.0f},
+    .origin = {0, 0},
 };
 
 static inline f32 clamp(f32 x, f32 a, f32 b) {

@@ -2,6 +2,24 @@
 #include "update.h"
 #include "random.h"
 #include "color.h"
+#include <rlgl.h>
+
+RenderTexture lightmap;
+Shader shadow;
+Shader light;
+Shader final;
+
+int light_resolution = 512;
+int shadow_resolution = 256;
+
+int light_pos_loc;
+int resolution_loc;
+int shadow_resolution_light_loc;
+int shadow_resolution_shadow_loc;
+int light_resolution_loc;
+int light_mode_loc;
+int cone_angle_loc;
+int cone_width_loc;
 
 static inline const Vector2 get_scale() {
     const f32 width  = (f32) GetScreenWidth();
@@ -17,8 +35,8 @@ static inline Vector2 world_to_screen(struct camera c, v2 v) {
     const f32 height = (f32) GetScreenHeight();
     Vector2 scale = get_scale();
     return (Vector2) {
-        .x = width  * ((v.x + c.target.x)/scale.x + 0.5f),
-        .y = height * ((v.y + c.target.y)/scale.y + 0.5f)
+        .x = width  * ((v.x - c.target.x)/scale.x) + c.offset.x,
+        .y = height * ((v.y - c.target.y)/scale.y) + c.offset.y,
     };
 }
 
@@ -28,8 +46,8 @@ v2 screen_to_world(struct camera c, Vector2 v) {
 
     v2 res;
     Vector2 scale = get_scale();
-    res.x = scale.x*(v.x / width  - 0.5f);
-    res.y = scale.y*(v.y / height - 0.5f);
+    res.x = scale.x*((v.x - c.offset.x) / width) + c.target.x;
+    res.y = scale.y*((v.y - c.offset.y) / height) + c.target.y;
 
     return res;
 }
@@ -38,8 +56,38 @@ static inline f32 world_to_screen_length(struct camera c, f32 len) {
     const f32 width  = (f32) GetScreenWidth();
     const f32 height = (f32) GetScreenHeight();
     Vector2 scale = get_scale();
-    const Vector2 v = world_to_screen(c, (v2) {len - scale.x*0.5f, len - scale.y*0.5f});
+    const Vector2 v = world_to_screen((struct camera){0}, (v2) {len, len});
     return fminf(v.x, v.y);
+}
+
+static inline void set_light_resolution() {
+    light_resolution = (int) world_to_screen_length((struct camera){0}, 16.0f);
+}
+
+void draw_init() {
+    set_light_resolution();
+
+    shadow = LoadShader("res/shadow.vert", "res/shadow.frag");
+    light = LoadShader("res/light.vert", "res/light.frag");
+    final = LoadShader("res/final.vert", "res/final.frag");
+
+    lightmap = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+
+    light_pos_loc                = GetShaderLocation(light, "light_pos");
+    resolution_loc               = GetShaderLocation(light, "resolution");
+    shadow_resolution_light_loc  = GetShaderLocation(light, "shadow_resolution");
+    shadow_resolution_shadow_loc = GetShaderLocation(shadow, "shadow_resolution");
+    light_resolution_loc         = GetShaderLocation(light, "light_resolution");
+    light_mode_loc               = GetShaderLocation(light, "light_mode");
+    cone_angle_loc               = GetShaderLocation(light, "cone_angle");
+    cone_width_loc               = GetShaderLocation(light, "cone_width");
+}
+
+void draw_deinit() {
+    UnloadShader(light);
+    UnloadShader(shadow);
+    UnloadShader(final);
+    UnloadRenderTexture(lightmap);
 }
 
 struct debug_v2 {
@@ -108,6 +156,32 @@ void draw_tile(struct camera c, f32 x, f32 y, f32 border_thickness, Color light,
                   light);
 }
 
+void draw_occluders(struct camera c, const struct map *map, RenderTexture occlusionmap) {
+    const f32 screen_tile_size = world_to_screen_length(c, map->tile_size);
+    const Vector2 origin = world_to_screen(c, map->origin);
+
+    BeginTextureMode(occlusionmap);
+    ClearBackground(BLANK);
+    for (i32 y = 0; y < (i32) map->height; ++y) {
+        for (i32 x = 0; x < (i32) map->width; ++x) {
+            const f32 rx = screen_tile_size * (f32) x;
+            const f32 ry = screen_tile_size * (f32) y;
+
+            const u8 tile = map->data[y*map->width + x];
+
+            const f32 tile_x = origin.x + rx;
+            const f32 tile_y = origin.y + ry;
+
+            switch (tile) {
+            case '#': {
+                draw_tile(c, tile_x, tile_y, 0.0f, WHITE, WHITE);
+            } break;
+            }
+        }
+    }
+    EndTextureMode();
+}
+
 void draw_map(struct camera c, const struct map *map) {
     const f32 screen_tile_size = world_to_screen_length(c, map->tile_size);
 
@@ -127,7 +201,7 @@ void draw_map(struct camera c, const struct map *map) {
 
             switch (tile) {
             case '#': {
-                const f32 lightness = 0.35f + 0.1f*random_next_bilateral(&series);
+                const f32 lightness = 0.25f + 0.1f*random_next_bilateral(&series);
 
                 const Color light = hsl_to_rgb(HSL(0.0f, 0.0f, lightness));
                 const Color dark  = hsl_to_rgb(HSL(0.0f, 0.0f, 0.7f*lightness));
@@ -139,8 +213,8 @@ void draw_map(struct camera c, const struct map *map) {
             case ' ': {
                 const f32 hue = 120.0f + 50.0f*random_next_bilateral(&series);
 
-                const Color light = hsl_to_rgb(HSL(hue, 0.25f, 0.5f));
-                const Color dark  = hsl_to_rgb(HSL(hue, 0.25f, 0.4f));
+                const Color light = hsl_to_rgb(HSL(hue, 0.45f, 0.3f));
+                const Color dark  = hsl_to_rgb(HSL(hue, 0.45f, 0.2f));
 
                 const f32 thickness = 0.05f * random_next_unilateral(&series);
 
@@ -176,17 +250,156 @@ void draw_player(struct camera c, struct player *p) {
         DrawLineEx(pos, world_to_screen(c, v2add(p->pos, v2scale(line_len, p->look))), thickness, DARKGRAY);
         DrawCircle(pos.x, pos.y, world_to_screen_length(c, radius), dark);
         DrawCircle(pos.x, pos.y, world_to_screen_length(c, 0.7f*radius), light);
+
+        //f32 r = world_to_screen_length(c, radius);
+        //DrawTriangle((Vector2){pos.x-r, pos.y},
+        //             (Vector2){pos.x+r, pos.y},
+        //             (Vector2){pos.x, pos.y-r},
+        //             WHITE);
     }
 }
 
+enum light_mode {
+    LIGHT_MODE_POINT = 0,
+    LIGHT_MODE_CONE,
+};
+
+struct light {
+    bool active;
+    // NOTE(anjo): The way we deal with constructiono shadow maps,
+    //             as we do it single threadedly, we don't need
+    //             a separate occlusionmap for each light.
+    //
+    //             @OPTIMIZATION
+    RenderTexture occlusionmap;
+    RenderTexture shadowmap;
+    enum light_mode mode;
+    v2 pos;
+    // These last two entries are only used by cone lights
+    f32 cone_angle;
+    f32 cone_width;
+};
+
+#define MAX_LIGHTS 16
+static struct light lights[MAX_LIGHTS];
+static u32 num_lights;
+
+void draw_dynamic_light(struct game *game, enum light_mode mode, v2 pos, f32 cone_angle, f32 cone_width) {
+    assert(num_lights < MAX_LIGHTS);
+
+    struct light *l = &lights[num_lights++];
+    if (!l->active) {
+        l->occlusionmap = LoadRenderTexture(light_resolution, light_resolution);
+        l->shadowmap = LoadRenderTexture(shadow_resolution, 1);
+        SetTextureFilter(l->occlusionmap.texture, TEXTURE_FILTER_BILINEAR);
+        SetTextureWrap(l->occlusionmap.texture, TEXTURE_WRAP_REPEAT);
+        l->active = true;
+    }
+
+    l->mode = mode;
+    l->pos = pos;
+    l->cone_angle = cone_angle;
+    l->cone_width= cone_width;
+
+    {
+        struct camera c = {
+            .target = l->pos,
+            .offset = {light_resolution/2, light_resolution/2},
+        };
+        draw_occluders(c, &game->map, l->occlusionmap);
+    }
+
+    BeginShaderMode(shadow);
+    SetShaderValue(shadow, shadow_resolution_shadow_loc, &shadow_resolution, SHADER_UNIFORM_INT);
+    BeginTextureMode(l->shadowmap);
+    ClearBackground(BLANK);
+    DrawTextureRec(l->occlusionmap.texture,
+                   (Rectangle){0,0,l->occlusionmap.texture.width,l->occlusionmap.texture.height},
+                   (Vector2){0,0}, WHITE);
+    EndTextureMode();
+    EndShaderMode();
+}
+
 void draw_game(struct camera c, struct game *game, const f32 t) {
-    draw_map(c, &game->map);
+    if (IsWindowResized()) {
+        set_light_resolution();
+
+        UnloadRenderTexture(lightmap);
+        lightmap = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+
+        // Invalidate all lights
+        for (u32 i = 0; i < num_lights; ++i) {
+            struct light *l = &lights[i];
+            UnloadRenderTexture(l->occlusionmap);
+            UnloadRenderTexture(l->shadowmap);
+            l->active = false;
+        }
+    }
+
+    num_lights = 0;
+
     for (u8 i = 0; i < MAX_CLIENTS; ++i) {
+        struct player *player = &game->players[i];
+        if (!player->occupied)
+            continue;
+
+        float cone_angle = M_PI + atan2f(player->look.y, player->look.x);
+        draw_dynamic_light(game, LIGHT_MODE_CONE, player->pos, cone_angle, M_PI/2.0f);
+    }
+
+    Vector2 resolution = {GetScreenWidth(), GetScreenHeight()};
+
+
+    BeginTextureMode(lightmap);
+    ClearBackground(BLANK);
+    for (u32 i = 0; i < num_lights; ++i) {
+        struct light *l = &lights[i];
+        Vector2 light_screen_pos = world_to_screen(c, l->pos);
+
+        BeginShaderMode(light);
+        BeginBlendMode(BLEND_ADDITIVE);
+
+
+        SetShaderValue(light, shadow_resolution_light_loc, &shadow_resolution, SHADER_UNIFORM_INT);
+        SetShaderValue(light, light_resolution_loc, &light_resolution, SHADER_UNIFORM_INT);
+        SetShaderValue(light, light_pos_loc, &light_screen_pos, SHADER_UNIFORM_VEC2);
+        SetShaderValue(light, resolution_loc, &resolution, SHADER_UNIFORM_VEC2);
+        SetShaderValue(light, light_mode_loc, &l->mode, SHADER_UNIFORM_INT);
+        SetShaderValue(light, cone_angle_loc, &l->cone_angle, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(light, cone_width_loc, &l->cone_width, SHADER_UNIFORM_FLOAT);
+
+        DrawTextureRec(l->shadowmap.texture,
+                       (Rectangle){0,0,light_resolution,light_resolution},
+                       (Vector2){light_screen_pos.x - light_resolution/2,
+                                 light_screen_pos.y - light_resolution/2},
+                       (Color){200,200,200,200});
+
+        EndBlendMode();
+        EndShaderMode();
+        break; //@HACK
+    }
+    EndTextureMode();
+
+    draw_map(c, &game->map);
+    DrawRectangle(0,0,resolution.x,resolution.y,(Color){10,10,10,150});
+    //DrawRectangle(0,0,resolution.x,resolution.y,BLACK);
+    BeginBlendMode(BLEND_ADDITIVE);
+    DrawTextureRec(lightmap.texture, (Rectangle){0,0,lightmap.texture.width,-lightmap.texture.height}, (Vector2){0,0}, WHITE);
+    EndBlendMode();
+
+    BeginShaderMode(final);
+    SetShaderValueTexture(final, GetShaderLocation(final, "lightmap"), lightmap.texture);
+    SetShaderValue(final, GetShaderLocation(final, "resolution"), &resolution, SHADER_UNIFORM_VEC2);
+    for (u8 i = 1 /*@HACK*/; i < MAX_CLIENTS; ++i) {
         struct player *player = &game->players[i];
         if (!player->occupied)
             continue;
         draw_player(c, player);
     }
+    EndShaderMode();
+
+    assert(game->players[0].occupied);
+    draw_player(c, &game->players[0]);
 
     {
         const i32 x = GetMouseX();

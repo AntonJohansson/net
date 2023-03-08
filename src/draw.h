@@ -45,6 +45,9 @@ struct player;
 struct map;
 struct game;
 
+void draw_init();
+void draw_deinit();
+
 v2 screen_to_world(struct camera c, Vector2 v);
 
 void debug_v2(v2 pos, v2 v, f32 scale, Color color);
