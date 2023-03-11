@@ -33,7 +33,7 @@ enum input_type {
     INPUT_LAST,
 };
 
-struct input {
+struct __attribute__((packed)) input {
     v2 look;
     bool active[INPUT_LAST];
 };

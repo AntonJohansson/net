@@ -5,7 +5,7 @@ BUILD=build
 THIRD_PARTY=third_party
 CLIENT=${BUILD}/client
 SERVER=${BUILD}/server
-CFLAGS="-fsanitize=address -g -O0 -lpthread -lm -std=gnu2x -Wno-constant-logical-operand -I${BUILD}/raylib/raylib/include"
+CFLAGS="-fsanitize=address -g -O3 -lpthread -lm -std=gnu2x -Wno-constant-logical-operand -I${BUILD}/raylib/raylib/include"
 
 # Create build directory if needed
 [ ! -d ${BUILD} ] && mkdir ${BUILD}

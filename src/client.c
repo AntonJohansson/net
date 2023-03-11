@@ -52,7 +52,7 @@ struct camera camera = {0};
 // Network
 //
 
-const u64 initial_server_net_tick_offset = 5;
+const u64 initial_server_net_tick_offset = 12;
 
 struct peer_auth_buffer {
     struct server_packet_peer_auth data[UPDATE_LOG_BUFFER_SIZE];
@@ -155,6 +155,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             time_nanosleep(frame.desired_delta);
             ++adjustment;
         } else if (adjustment > 0) {
+            printf("We are behind!\n");
             sleep_this_frame = false;
             --adjustment;
         }
@@ -170,6 +171,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                     p += sizeof(struct server_batch_header);
 
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
+                        printf("We have %d adjustment\n", adjustment);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
                         ++adjustment_iteration;
@@ -268,6 +270,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct client_peer *peer = NULL;
                             HashMapLookup(peer_map, peer_auth->player.id, peer);
 
+                            printf("Appending: %u %u\n", peer->auth_buffer.used, peer_auth->sim_tick);
+
                             CIRCULAR_BUFFER_APPEND(&peer->auth_buffer, *peer_auth);
                         } break;
 
@@ -327,6 +331,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 continue;
 
             struct server_packet_peer_auth *entry = &peer->auth_buffer.data[peer->auth_buffer.bottom];
+            //printf("we should get here: %u %u\n", active_tick, entry->sim_tick);
             if (active_tick < entry->sim_tick)
                 continue;
 
@@ -425,13 +430,13 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             draw_game(camera, &game, main_player_id, t);
 
             //DrawText("client", 10, 10, 20, BLACK);
-            //if (frame.simulation_tick % FPS == 0) {
-            //    fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
-            //}
-            //if (!isinf(fps)) {
-            //    DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
-            //    DrawText(TextFormat("ping: %f", frame.dt * 1000.0f * NET_PER_SIM_TICKS * (f32) (-total_adjustment)), 10, 50, 20, GRAY);
-            //}
+            if (frame.simulation_tick % FPS == 0) {
+                fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
+            }
+            if (!isinf(fps)) {
+                DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
+                DrawText(TextFormat("ping: %d", total_adjustment), 10, 50, 20, GRAY);
+            }
 
             //graph_append(&graph, v2len(player->velocity));
             draw_all_debug_v2s(camera);
