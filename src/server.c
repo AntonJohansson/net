@@ -340,6 +340,9 @@ int main() {
                 update_player(&game, player, &entry->input_update.input, frame.dt);
                 collect_and_resolve_static_collisions(&game);
 
+                // We don't care about sound
+                ListClear(game.sound_list);
+
                 // Send AUTH packet to peer
                 {
                     struct server_header response_header = {

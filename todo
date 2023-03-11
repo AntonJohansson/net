@@ -1,10 +1,8 @@
 What do I need to make this game playable?
-     - spatial audio
-        - volume decrease at distance
-        - pan depending on which side it happens
     - step sounds
     - render weapons
     - tune movements
+    - nade beeping
 
 Game idea:
     - multiplayer + cooperative

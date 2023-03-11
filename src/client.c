@@ -335,13 +335,15 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             CIRCULAR_BUFFER_POP(&peer->auth_buffer);
         }
 
+        struct player *player = NULL;
+        if (main_player_id != HASH_MAP_INVALID_HASH)
+            HashMapLookup(game.player_map, main_player_id, player);
+
         //
         // Handle input + append to circular buffer
         //
         if (connected) {
-            printf("uwu\n");
-            struct player *player = NULL;
-            HashMapLookup(game.player_map, main_player_id, player);
+            assert(player != NULL);
 
             struct input *input = &input_buffer[input_count];
             input_count = (input_count + 1) % INPUT_BUFFER_LENGTH;
@@ -380,10 +382,13 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         update_projectiles(&game, frame.dt);
 
         // Play queued sounds
-        ForEachList(game.sound_list, enum sound, sound) {
-            audio_play_sound(*sound);
+        if (connected) {
+            assert(player != NULL);
+            ForEachList(game.sound_list, struct spatial_sound, spatial_sound) {
+                audio_play_spatial_sound(spatial_sound->sound, spatial_sound->pos, player->pos, player->look);
+            }
+            ListClear(game.sound_list);
         }
-        ListClear(game.sound_list);
 
         if (run_network_tick) {
             const size_t size = (intptr_t) output_buffer.top - (intptr_t) output_buffer.base;
@@ -406,8 +411,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         BeginDrawing();
         ClearBackground(BLACK);
         if (connected) {
-            struct player *player = NULL;
-            HashMapLookup(game.player_map, main_player_id, player);
+            assert(player != NULL);
 
             camera.offset = (v2) {GetScreenWidth()/2, GetScreenHeight()/2};
             camera.target = player->pos;
