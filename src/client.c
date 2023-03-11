@@ -153,8 +153,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
         if (adjustment < 0) {
             printf("We are ahead, sleeping %d\n", frame.desired_delta);
-            time_nanosleep(frame.desired_delta);
-            ++adjustment;
+            time_nanosleep((-adjustment)*frame.desired_delta);
+            adjustment = 0;
         } else if (adjustment > 0) {
             printf("We are behind!\n");
             sleep_this_frame = false;
