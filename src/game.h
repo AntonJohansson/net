@@ -14,6 +14,8 @@
 enum input_type {
     INPUT_NULL = 0,
 
+    INPUT_MUTE,
+
     INPUT_MOVE_LEFT,
     INPUT_MOVE_RIGHT,
     INPUT_MOVE_UP,
@@ -52,7 +54,7 @@ enum player_weapon {
 
 typedef u64 PlayerId;
 
-struct player {
+struct __attribute__((packed)) player {
     PlayerId id;
 
     v2 pos;
@@ -147,7 +149,7 @@ static inline u8 map_at(const struct map *map, v2 at) {
 // Projectiles
 //
 
-struct nade_projectile {
+struct __attribute__((packed)) nade_projectile {
     PlayerId player_id_from;
     v2 dir;
     v2 start_pos;
@@ -164,7 +166,7 @@ struct explosion {
     f32 time_left;
 };
 
-struct hitscan_projectile {
+struct __attribute__((packed)) hitscan_projectile {
     PlayerId player_id_from;
     PlayerId player_id_to;
     v2 dir;

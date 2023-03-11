@@ -88,7 +88,7 @@ static inline void time_nanosleep(u64 t) {
     do {                                                                        \
         assert((buf)->used > 0);                                                \
         (buf)->bottom = ((buf)->bottom + 1) % ARRLEN((buf)->data);              \
-        (buf)->used--;                                                          \
+        --(buf)->used;                                                          \
     } while (0)
 
 //
@@ -149,12 +149,6 @@ static inline void pop(struct byte_buffer *buffer, void **data, size_t size) {
         bool occupied[size]; \
         u32 num_items;      \
     }
-
-//#define ListInsert(list, value)           \
-//    do {                                                \
-//        assert(list.num_items < ARRLEN(list.items));    \
-//        list.items[list.num_items++] = value;           \
-//    } while (0)
 
 #define ListInsert(list, value)                         \
     do {                                                \

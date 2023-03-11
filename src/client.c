@@ -76,6 +76,8 @@ static inline void new_packet(struct byte_buffer *output_buffer) {
 //
 
 void client_handle_input(struct player *p, struct input *input) {
+    if (IsKeyPressed(KEY_M))
+        input->active[INPUT_MUTE] = true;
     if (IsKeyDown(KEY_W))
         input->active[INPUT_MOVE_UP] = true;
     if (IsKeyDown(KEY_A))
@@ -139,6 +141,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
     };
 
     ENetEvent event = {0};
+
+    bool mute = false;
 
     while (running) {
         // Begin frame
@@ -351,6 +355,9 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
             client_handle_input(player, input);
 
+            if (input->active[INPUT_MUTE])
+                mute = !mute;
+
             if (input->active[INPUT_QUIT])
                 running = false;
 
@@ -384,8 +391,10 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         // Play queued sounds
         if (connected) {
             assert(player != NULL);
-            ForEachList(game.sound_list, struct spatial_sound, spatial_sound) {
-                audio_play_spatial_sound(spatial_sound->sound, spatial_sound->pos, player->pos, player->look);
+            if (!mute) {
+                ForEachList(game.sound_list, struct spatial_sound, spatial_sound) {
+                    audio_play_spatial_sound(spatial_sound->sound, spatial_sound->pos, player->pos, player->look);
+                }
             }
             ListClear(game.sound_list);
         }
