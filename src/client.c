@@ -271,8 +271,6 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct client_peer *peer = NULL;
                             HashMapLookup(peer_map, peer_auth->player.id, peer);
 
-                            printf("Appending: %u %u\n", peer->auth_buffer.used, peer_auth->sim_tick);
-
                             CIRCULAR_BUFFER_APPEND(&peer->auth_buffer, *peer_auth);
                         } break;
 
