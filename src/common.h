@@ -69,7 +69,7 @@ static inline void time_nanosleep(u64 t) {
     struct timespec ts = {
         .tv_nsec = t,
     };
-    while(nanosleep(&ts, &ts) == -1);
+    nanosleep(&ts, NULL);
 }
 
 //

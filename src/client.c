@@ -152,6 +152,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         bool sleep_this_frame = true;
 
         if (adjustment < 0) {
+            printf("We are ahead, sleeping %d\n", frame.desired_delta);
             time_nanosleep(frame.desired_delta);
             ++adjustment;
         } else if (adjustment > 0) {
@@ -171,7 +172,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                     p += sizeof(struct server_batch_header);
 
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
-                        printf("We have %d adjustment\n", adjustment);
+                        printf("We have %d adjustment\n", batch->adjustment);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
                         ++adjustment_iteration;
