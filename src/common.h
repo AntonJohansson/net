@@ -7,9 +7,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include <stdio.h>
-#include <raylib.h>
-
 typedef int8_t   i8;
 typedef uint8_t  u8;
 typedef int16_t  i16;
@@ -27,6 +24,9 @@ typedef double   f64;
 
 #define ARRLEN(arr) (sizeof(arr)/sizeof(arr[0]))
 
+#define ArrayPtrToIndex(arr, ptr) \
+    (((intptr_t) ptr - (intptr_t) &arr[0])/sizeof(arr[0]))
+
 //
 // Float stuff
 //
@@ -39,6 +39,18 @@ static inline f32 f32_abs(f32 f) {
 
 static inline bool f32_equal(f32 a, f32 b) {
     return f32_abs(a - b) < EPSILON;
+}
+
+static inline f32 f32_min(f32 a, f32 b) {
+    return (a < b) ? a : b;
+}
+
+static inline f32 f32_max(f32 a, f32 b) {
+    return (a > b) ? a : b;
+}
+
+static inline f32 f32_clamp(f32 x, f32 a, f32 b) {
+    return f32_min(f32_max(x, a), b);
 }
 
 //
@@ -54,10 +66,10 @@ static inline u64 time_current() {
 }
 
 static inline void time_nanosleep(u64 t) {
-    // HERE
-    //nanosleep(&(struct timespec) { .tv_nsec = t }, NULL);
-    f64 s = (f64)t / 1000000000.0;
-    WaitTime(s);
+    struct timespec ts = {
+        .tv_nsec = t,
+    };
+    while(nanosleep(&ts, &ts) == -1);
 }
 
 //
@@ -126,3 +138,58 @@ static inline void pop(struct byte_buffer *buffer, void **data, size_t size) {
     *data = buffer->top;
     buffer->top += size;
 }
+
+//
+// Static unsorted list
+//
+
+#define List(type, size) \
+    struct {                \
+        type items[size];   \
+        bool occupied[size]; \
+        u32 num_items;      \
+    }
+
+//#define ListInsert(list, value)           \
+//    do {                                                \
+//        assert(list.num_items < ARRLEN(list.items));    \
+//        list.items[list.num_items++] = value;           \
+//    } while (0)
+
+#define ListInsert(list, value)                         \
+    do {                                                \
+        assert(list.num_items < ARRLEN(list.items));    \
+        list.items[list.num_items] = value;             \
+        list.occupied[list.num_items] = true;           \
+        ++list.num_items;                               \
+    } while(0)
+
+#define ListTagRemoveIndex(list, index)         \
+    do {                                        \
+        assert(index < list.num_items);         \
+        list.occupied[index] = false;           \
+    } while (0)
+
+#define ListTagRemovePtr(list, ptr) \
+    ListTagRemoveIndex(list, ArrayPtrToIndex(list.items, ptr))
+
+#define ListRemoveTaggedItems(list)                                                                                      \
+    do {                                                                                                        \
+        for (u32 i = 0; i < list.num_items;) {                                                                  \
+            if (!list.occupied[i]) {                                                                            \
+                if (i+1 < list.num_items) {                                                                     \
+                    memmove(&list.items[i], &list.items[i+1], sizeof(list.items[0])*(list.num_items - (i+1)));  \
+                    memmove(&list.occupied[i], &list.occupied[i+1], sizeof(bool)*(list.num_items - (i+1)));     \
+                }                                                                                               \
+                --list.num_items;                                                                               \
+            } else {                                                                                            \
+                ++i;                                                                                            \
+            }                                                                                                   \
+        }                                                                                                       \
+    } while (0)
+
+#define ListClear(list) \
+    list.num_items = 0
+
+#define ForEachList(list, type, iter) \
+    for (type *iter = &list.items[0], *_top = &list.items[list.num_items]; iter < _top; ++iter)

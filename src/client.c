@@ -1,29 +1,34 @@
+// Our includes
+#include "packet.h"
+#include "common.h"
+#include "random.h"
+#include "color.h"
+#include "game.h"
+#include "audio.h"
+#include  "draw.h"
+
+// Third party includes
 #define ENET_IMPLEMENTATION
 #include "enet.h"
 
-#include "packet.h"
-#include "common.h"
+#include <raylib.h>
+
+// stdlib
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <math.h>
-#include "random.h"
-#include <raylib.h>
-#include "color.h"
-#include "draw.h"
-
-#define WIDTH 800
-#define HEIGHT 600
 
 #define PACKET_LOG_SIZE 2048
 #define OUTPUT_BUFFER_SIZE 2048
 #define INPUT_BUFFER_LENGTH 512
 #define UPDATE_LOG_BUFFER_SIZE 512
 
-const u64 initial_server_net_tick_offset = 5;
+//
+// Client state
+//
 
 bool running = true;
-
 bool connected = false;
 
 struct frame {
@@ -34,22 +39,31 @@ struct frame {
     f32 dt;
 };
 
+typedef enum MenuState {
+    START,
+    CONNECTING,
+    LOBBY,
+    GAME,
+} MenuState;
+
+struct camera camera = {0};
+
+//
+// Network
+//
+
+const u64 initial_server_net_tick_offset = 5;
+
 struct peer_auth_buffer {
     struct server_packet_peer_auth data[UPDATE_LOG_BUFFER_SIZE];
     u64 bottom;
     u64 used;
 };
 
-struct peer {
-    bool connected;
-    struct player *player;
+struct client_peer {
+    PlayerId id;
     struct peer_auth_buffer auth_buffer;
 };
-
-static inline void peer_disconnect(struct peer *p) {
-    p->player->occupied = false;
-    memset(p, 0, sizeof(struct peer));
-}
 
 static inline void new_packet(struct byte_buffer *output_buffer) {
     struct client_batch_header *batch = (void *) output_buffer->base;
@@ -57,7 +71,9 @@ static inline void new_packet(struct byte_buffer *output_buffer) {
     ++batch->num_packets;
 }
 
-struct camera camera = {0};
+//
+// Game
+//
 
 void client_handle_input(struct player *p, struct input *input) {
     if (IsKeyDown(KEY_W))
@@ -70,9 +86,17 @@ void client_handle_input(struct player *p, struct input *input) {
         input->active[INPUT_MOVE_RIGHT] = true;
     if (IsKeyDown(KEY_LEFT_SHIFT))
         input->active[INPUT_MOVE_DODGE] = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        input->active[INPUT_SHOOT_PRESSED] = true;
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-        input->active[INPUT_SHOOT] = true;
-    if (IsKeyDown(KEY_Q))
+        input->active[INPUT_SHOOT_HELD] = true;
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+        input->active[INPUT_SHOOT_RELEASED] = true;
+    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+        input->active[INPUT_ZOOM] = true;
+    if (IsKeyPressed(KEY_Q))
+        input->active[INPUT_SWITCH_WEAPON] = true;
+    if (IsKeyDown(KEY_ESCAPE))
         input->active[INPUT_QUIT] = true;
 
     v2 v = screen_to_world(camera, (Vector2) {GetMouseX(), GetMouseY()});
@@ -83,14 +107,6 @@ void client_handle_input(struct player *p, struct input *input) {
         input->look.y = 0;
     }
 }
-
-typedef enum MenuState {
-    START,
-    CONNECTING,
-    LOBBY,
-    GAME,
-} MenuState;
-
 
 static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buffer) {
     struct graph graph = graph_new(2*FPS);
@@ -110,9 +126,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         .map = map,
     };
 
-    struct peer peers[MAX_CLIENTS] = {0};
-    u8 num_peers = 0;
-    u8 main_peer_index;
+    HashMap(struct client_peer, MAX_CLIENTS) peer_map = {0};
+    PlayerId main_player_id;
 
     i8 adjustment = 0;
     u8 adjustment_iteration = 0;
@@ -122,8 +137,6 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         .desired_delta = NANOSECONDS(1) / (f32) FPS,
         .dt = 1.0f / (f32) FPS,
     };
-
-    bool automove = false;
 
     ENetEvent event = {0};
 
@@ -168,19 +181,19 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct server_packet_greeting *greeting = (struct server_packet_greeting *) p;
                             p += sizeof(struct server_packet_greeting);
 
+                            printf("yess\n");
+
                             frame.network_tick = greeting->initial_net_tick + initial_server_net_tick_offset;
                             frame.simulation_tick = frame.network_tick * NET_PER_SIM_TICKS;
-                            main_peer_index = greeting->peer_index;
-                            assert(!peers[main_peer_index].connected);
-                            peers[main_peer_index].connected = true;
 
-                            struct player *p = allocate_player(&game, greeting->id);
-                            p->pos = greeting->initial_pos;
-                            p->hue = 50.0f;
-                            p->health = 100.0f;
+                            struct player *player = NULL;
+                            HashMapInsert(game.player_map, greeting->id, player);
+                            main_player_id = player->id;
 
-                            peers[main_peer_index].player = p;
-                            ++num_peers;
+                            struct client_peer* peer = NULL;
+                            HashMapInsert(peer_map, greeting->id, peer);
+                            peer->id = player->id;
+
                             connected = true;
                         } break;
 
@@ -188,15 +201,33 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct server_packet_peer_greeting *greeting = (struct server_packet_peer_greeting *) p;
                             p += sizeof(struct server_packet_peer_greeting);
 
-                            u8 peer_index = greeting->peer_index;
+                            struct player *player = NULL;
+                            HashMapInsert(game.player_map, greeting->id, player);
 
-                            struct player *p = allocate_player(&game, greeting->id);
-                            p->pos = greeting->initial_pos;
-                            p->hue = 20.0f;
-                            p->health = greeting->health;
+                            struct client_peer *peer = NULL;
+                            HashMapInsert(peer_map, player->id, peer);
+                            peer->id = player->id;
+                        } break;
 
-                            peers[peer_index].player = p;
-                            ++num_peers;
+                        case SERVER_PACKET_PLAYER_SPAWN: {
+                            struct server_packet_player_spawn *spawn = (struct server_packet_player_spawn *) p;
+                            p += sizeof(struct server_packet_player_spawn);
+
+                            struct player *player = NULL;
+                            HashMapLookup(game.player_map, spawn->player.id, player);
+                            *player = spawn->player;
+                        } break;
+
+                        case SERVER_PACKET_NADE: {
+                            struct server_packet_nade *nade_packet = (struct server_packet_nade *) p;
+                            p += sizeof(struct server_packet_nade);
+                            ListInsert(game.nade_list, nade_packet->nade);
+                        } break;
+
+                        case SERVER_PACKET_HITSCAN: {
+                            struct server_packet_hitscan *hitscan_packet = (struct server_packet_hitscan *) p;
+                            p += sizeof(struct server_packet_hitscan);
+                            ListInsert(game.hitscan_list, hitscan_packet->hitscan);
                         } break;
 
                         case SERVER_PACKET_AUTH: {
@@ -207,34 +238,22 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             u64 diff = frame.simulation_tick - auth->sim_tick - 1;
                             assert(diff < INPUT_BUFFER_LENGTH);
 
-                            struct player *player = peers[main_peer_index].player;
+                            struct player *player = NULL;
+                            HashMapLookup(game.player_map, main_player_id, player);
 
                             // Gets the input for the sim_tick after the sim_tick we recieved auth data for
+                            // NOTE(anjo): We might have to actually use older game states here, this could
+                            // cause WEIRD problems.
                             struct game old_game = game;
                             struct player old_player = auth->player;
                             u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
                             for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
                                 struct input *old_input = &input_buffer[old_index];
-                                move(&old_game, &old_player, old_input, frame.dt, true);
+                                update_player(&old_game, &old_player, old_input, frame.dt);
                                 collect_and_resolve_static_collisions_for_player(&old_game, &old_player);
                             }
 
                             if (!v2equal(player->pos, old_player.pos)) {
-                                //{
-                                //    printf("  Replaying %lu inputs from %lu+1 to %lu-1\n", diff, auth->sim_tick, frame.simulation_tick);
-                                //    printf("    Starting from {%f, %f}\n", auth->player.pos.x, auth->player.pos.y);
-                                //    printf("    Should match {%f, %f}\n", player->pos.x, player->pos.y);
-
-                                //    struct game old_game = game;
-                                //    struct player tmp_player = auth->player;
-                                //    u8 old_index = (input_count + INPUT_BUFFER_LENGTH - diff) % INPUT_BUFFER_LENGTH;
-                                //    for (; old_index != input_count; old_index = (old_index + 1) % INPUT_BUFFER_LENGTH) {
-                                //        struct input *old_input = &input_buffer[old_index];
-                                //        move(&old_game, &tmp_player, old_input, frame.dt, true);
-                                //        printf("    -> {%f, %f}\n", tmp_player.pos.x, tmp_player.pos.y);
-                                //    }
-                                //}
-
                                 printf("  Server disagreed! {%f, %f} vs {%f, %f}\n", player->pos.x, player->pos.y, old_player.pos.x, old_player.pos.y);
                                 *player = auth->player;
                             }
@@ -244,10 +263,19 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct server_packet_peer_auth *peer_auth = (struct server_packet_peer_auth *) p;
                             p += sizeof(struct server_packet_peer_auth);
 
-                            const u8 peer_index = peer_auth->peer_index;
-                            assert(peer_index >= 0 && peer_index < num_peers);
-                            struct peer *peer = &peers[peer_index];
+                            struct client_peer *peer = NULL;
+                            HashMapLookup(peer_map, peer_auth->player.id, peer);
+
                             CIRCULAR_BUFFER_APPEND(&peer->auth_buffer, *peer_auth);
+                        } break;
+
+                        case SERVER_PACKET_PLAYER_KILL: {
+                            struct server_packet_player_kill *kill = (struct server_packet_player_kill *) p;
+                            p += sizeof(struct server_packet_player_kill);
+
+                            struct player *p = NULL;
+                            HashMapLookup(game.player_map, kill->player_id, p);
+                            p->health = 0.0f;
                         } break;
 
                         case SERVER_PACKET_DROPPED: {
@@ -257,9 +285,9 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct server_packet_peer_disconnected *disc = (struct server_packet_peer_disconnected *) p;
                             p += sizeof(struct server_packet_peer_disconnected);
 
-                            printf("%d disconnected!\n", disc->peer_index);
-                            peer_disconnect(&peers[disc->peer_index]);
-                            --num_peers;
+                            printf("%d disconnected!\n", disc->player_id);
+                            HashMapRemove(game.player_map, disc->player_id);
+                            HashMapRemove(peer_map, disc->player_id);
                         } break;
                         default:
                             printf("Received unknown packet type %d\n", header->type);
@@ -285,68 +313,77 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             }
         }
 
+        //
+        // Loop over all peers, and apply auth data
+        //
+
+        // active_tick is the tick we're applying peer data from,
+        // this is always less than the current simulation tick.
         u64 active_tick = frame.simulation_tick + 2*total_adjustment;
-        for (u8 i = 0; i < num_peers; ++i) {
-            if (i == main_peer_index)
+        HashMapForEach(peer_map, struct client_peer, peer) {
+            if (!HashMapExists(peer_map, peer) || peer->id == main_player_id || peer->auth_buffer.used == 0)
                 continue;
-            struct peer *peer = &peers[i];
-            if (peer->auth_buffer.used > 0) {
-                struct server_packet_peer_auth *entry = &peer->auth_buffer.data[peer->auth_buffer.bottom];
 
-                if (active_tick < entry->sim_tick)
-                    continue;
+            struct server_packet_peer_auth *entry = &peer->auth_buffer.data[peer->auth_buffer.bottom];
+            if (active_tick < entry->sim_tick)
+                continue;
 
-                *peer->player = entry->player;
+            struct player *player = NULL;
+            HashMapLookup(game.player_map, peer->id, player);
+            *player = entry->player;
 
-                CIRCULAR_BUFFER_POP(&peer->auth_buffer);
-            }
+            CIRCULAR_BUFFER_POP(&peer->auth_buffer);
         }
 
         //
         // Handle input + append to circular buffer
         //
-        struct input *input = &input_buffer[input_count];
-        struct player *player = peers[main_peer_index].player;
-        input_count = (input_count + 1) % INPUT_BUFFER_LENGTH;
-        memset(input->active, INPUT_NULL, sizeof(input->active));
         if (connected) {
+            printf("uwu\n");
+            struct player *player = NULL;
+            HashMapLookup(game.player_map, main_player_id, player);
+
+            struct input *input = &input_buffer[input_count];
+            input_count = (input_count + 1) % INPUT_BUFFER_LENGTH;
+            memset(input->active, INPUT_NULL, sizeof(input->active));
+
             client_handle_input(player, input);
+
+            if (input->active[INPUT_QUIT])
+                running = false;
+
+            //
+            // Do game update and send to server, assuming we
+            // are connected and the player is alive
+            //
+
+            if (player->health > 0.0f) {
+                struct client_header header = {
+                    .type = CLIENT_PACKET_UPDATE,
+                    .sim_tick = frame.simulation_tick,
+                };
+
+                struct client_packet_update update = {
+                    .input = *input,
+                };
+
+                new_packet(&output_buffer);
+                APPEND(&output_buffer, &header);
+                APPEND(&output_buffer, &update);
+
+                // Predictive move
+                update_player(&game, player, input, frame.dt);
+                collect_and_resolve_static_collisions(&game);
+            }
         }
 
-        //if (input->active[INPUT_QUIT])
-        //    running = false;
-        if (input->active[INPUT_QUIT]) {
-            automove = !automove;
+        update_projectiles(&game, frame.dt);
+
+        // Play queued sounds
+        ForEachList(game.sound_list, enum sound, sound) {
+            audio_play_sound(*sound);
         }
-
-        if (automove) {
-            if (frame.simulation_tick % 100 < 50)
-                input->active[INPUT_MOVE_LEFT] = true;
-            else
-                input->active[INPUT_MOVE_RIGHT] = true;
-        }
-
-        //
-        // Do game update and send to server
-        //
-        if (connected) {
-            struct client_header header = {
-                .type = CLIENT_PACKET_UPDATE,
-                .sim_tick = frame.simulation_tick,
-            };
-
-            struct client_packet_update update = {
-                .input = *input,
-            };
-
-            new_packet(&output_buffer);
-            APPEND(&output_buffer, &header);
-            APPEND(&output_buffer, &update);
-
-            // Predictive move
-            move(&game, player, input, frame.dt, false);
-            collect_and_resolve_static_collisions(&game);
-        }
+        ListClear(game.sound_list);
 
         if (run_network_tick) {
             const size_t size = (intptr_t) output_buffer.top - (intptr_t) output_buffer.base;
@@ -369,9 +406,12 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         BeginDrawing();
         ClearBackground(BLACK);
         if (connected) {
+            struct player *player = NULL;
+            HashMapLookup(game.player_map, main_player_id, player);
+
             camera.offset = (v2) {GetScreenWidth()/2, GetScreenHeight()/2};
             camera.target = player->pos;
-            draw_game(camera, &game, t);
+            draw_game(camera, &game, main_player_id, t);
 
             //DrawText("client", 10, 10, 20, BLACK);
             //if (frame.simulation_tick % FPS == 0) {
@@ -383,7 +423,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             //}
 
             //graph_append(&graph, v2len(player->velocity));
-            //draw_all_debug_v2s(camera);
+            draw_all_debug_v2s(camera);
             //draw_graph(&graph,
             //           (v2) {10, 80},
             //           (v2) {300, 200},
@@ -411,22 +451,17 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 }
 
 int main(int argc, char **argv) {
-    struct byte_buffer output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
-
-    {
-        struct client_batch_header batch = {0};
-        APPEND(&output_buffer, &batch);
-    }
-
     if (enet_initialize() != 0) {
         fprintf(stderr, "An error occurred while initializing ENet.\n");
         return EXIT_FAILURE;
     }
 
-    InitWindow(WIDTH, HEIGHT, "floating");
-    SetWindowState(FLAG_WINDOW_RESIZABLE);
-    HideCursor();
     draw_init();
+    audio_init();
+
+    struct byte_buffer output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
+    APPEND(&output_buffer, &(struct client_batch_header){0});
+
 
     MenuState menu_state = START;
 
@@ -583,8 +618,8 @@ int main(int argc, char **argv) {
     enet_host_destroy(client);
     enet_deinitialize();
 
+    audio_deinit();
     draw_deinit();
-    CloseWindow();
     byte_buffer_free(&output_buffer);
 
     return 0;

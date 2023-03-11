@@ -51,21 +51,14 @@ struct update_log_buffer {
     u64 used;
 };
 
-struct peer {
-    bool connected;
-    struct player *player;
+struct server_peer {
+    PlayerId id;
     struct update_log_buffer update_log;
     struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
 };
 
-static inline void peer_disconnect(struct peer *p) {
-    p->player->occupied = false;
-    memset(p, 0, sizeof(struct peer));
-    byte_buffer_free(&p->output_buffer);
-}
-
-static inline void new_packet(struct peer *p) {
+static inline void new_packet(struct server_peer *p) {
     struct server_batch_header *batch = (void *) p->output_buffer.base;
     assert(batch->num_packets < UINT16_MAX);
     ++batch->num_packets;
@@ -81,6 +74,11 @@ retry:;
     p->pos.x = x;
     p->pos.y = y;
 }
+
+struct respawn_list_item {
+    PlayerId id;
+    f32 time_left;
+};
 
 int main() {
     if (enet_initialize() != 0) {
@@ -115,8 +113,7 @@ int main() {
         .map = map,
     };
 
-    struct peer peers[MAX_CLIENTS] = {0};
-    u8 num_peers = 0;
+    HashMap(struct server_peer, MAX_CLIENTS) peer_map = {0};
 
     struct random_series_pcg random = random_seed_pcg(0x9053, 0x9005);
 
@@ -124,6 +121,8 @@ int main() {
     InitWindow(WIDTH, HEIGHT, "floating");
     HideCursor();
 #endif
+
+    List(struct respawn_list_item, MAX_CLIENTS) respawn_list = {0};
 
     while (running) {
         const u64 frame_start = time_current();
@@ -140,30 +139,26 @@ int main() {
                         printf("A new client connected from ????:%u.\n", event.peer->address.port);
                     }
 
-                    assert(num_peers < MAX_CLIENTS);
-                    u8 peer_index = 0;
-                    for (; peer_index < MAX_CLIENTS; ++peer_index)
-                        if (!peers[peer_index].connected)
-                            break;
-                    ++num_peers;
-                    event.peer->data = malloc(sizeof(u8));
-                    *(u8 *)event.peer->data = peer_index;
-
-                    peers[peer_index].connected = true;
-
                     const u64 id = player_id();
-                    struct player *p = allocate_player(&game, id);
-                    randomize_player_spawn(&random, game.map, p);
-                    p->hue = 20.0f;
-                    peers[peer_index].player = p;
 
-                    peers[peer_index].enet_peer = event.peer;
-                    peers[peer_index].output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
+                    event.peer->data = malloc(sizeof(PlayerId));
+                    *(PlayerId *)event.peer->data = id;
+
+                    struct server_peer *peer = NULL;
+                    HashMapInsert(peer_map, id, peer);
+                    peer->enet_peer = event.peer;
+                    peer->output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
+
+                    struct player *p = NULL;
+                    HashMapInsert(game.player_map, id, p);
+
+                    struct respawn_list_item item = {id, 0.1f};
+                    ListInsert(respawn_list, item);
 
                     struct server_batch_header batch = {
                         .num_packets = 0,
                     };
-                    APPEND(&peers[peer_index].output_buffer, &batch);
+                    APPEND(&peer->output_buffer, &batch);
 
                     // Send greeting for peer
                     {
@@ -174,13 +169,11 @@ int main() {
                         struct server_packet_greeting greeting = {
                             .initial_net_tick = frame.network_tick,
                             .id = id,
-                            .initial_pos = peers[peer_index].player->pos,
-                            .peer_index = peer_index,
                         };
 
-                        new_packet(&peers[peer_index]);
-                        APPEND(&peers[peer_index].output_buffer, &header);
-                        APPEND(&peers[peer_index].output_buffer, &greeting);
+                        new_packet(peer);
+                        APPEND(&peer->output_buffer, &header);
+                        APPEND(&peer->output_buffer, &greeting);
                     }
 
                     // Send greeting to all other peers
@@ -190,18 +183,15 @@ int main() {
                         };
 
                         struct server_packet_peer_greeting greeting = {
-                            .initial_pos = peers[peer_index].player->pos,
                             .id = id,
-                            .health = peers[peer_index].player->health,
-                            .peer_index = peer_index,
                         };
 
-                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                            if (!peers[i].connected || i == peer_index)
+                        HashMapForEach(peer_map, struct server_peer, other_peer) {
+                            if (!HashMapExists(peer_map, other_peer) || peer == other_peer)
                                 continue;
-                            new_packet(&peers[i]);
-                            APPEND(&peers[i].output_buffer, &header);
-                            APPEND(&peers[i].output_buffer, &greeting);
+                            new_packet(other_peer);
+                            APPEND(&other_peer->output_buffer, &header);
+                            APPEND(&other_peer->output_buffer, &greeting);
                         }
                     }
 
@@ -211,17 +201,16 @@ int main() {
                             .type = SERVER_PACKET_PEER_GREETING,
                         };
 
-                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                            if (!peers[i].connected || i == peer_index)
+                        HashMapForEach(peer_map, struct server_peer, other_peer) {
+                            if (!HashMapExists(peer_map, other_peer) || peer == other_peer)
                                 continue;
                             struct server_packet_peer_greeting greeting = {
-                                .initial_pos = peers[i].player->pos,
-                                .peer_index = i,
+                                .id = other_peer->id,
                             };
 
-                            new_packet(&peers[peer_index]);
-                            APPEND(&peers[peer_index].output_buffer, &header);
-                            APPEND(&peers[peer_index].output_buffer, &greeting);
+                            new_packet(peer);
+                            APPEND(&peer->output_buffer, &header);
+                            APPEND(&peer->output_buffer, &greeting);
                         }
                     }
                     break;
@@ -231,9 +220,10 @@ int main() {
                     struct client_batch_header *batch;
                     POP(&input_buffer, &batch);
 
-                    const u8 peer_index = *(u8 *)event.peer->data;
-                    assert(peer_index >= 0 && peer_index < MAX_CLIENTS);
-                    assert(peers[peer_index].connected);
+                    const PlayerId id = *(PlayerId *)event.peer->data;
+
+                    struct server_peer *peer = NULL;
+                    HashMapLookup(peer_map, id, peer);
 
                     assert(batch->num_packets > 0);
                     i64 tick = (i64) ((struct client_header *) input_buffer.top)->sim_tick;
@@ -251,7 +241,7 @@ int main() {
                     }
 
                     {
-                        struct server_batch_header *server_batch = (void *) peers[peer_index].output_buffer.base;
+                        struct server_batch_header *server_batch = (void *) peer->output_buffer.base;
                         server_batch->adjustment = adjustment;
                         server_batch->adjustment_iteration = batch->adjustment_iteration;
                     }
@@ -267,8 +257,8 @@ int main() {
 
                         printf("Dropping packet, too early: net_tick %lu, should be >= %lu\n", batch->net_tick, frame.network_tick);
 
-                        new_packet(&peers[peer_index]);
-                        APPEND(&peers[peer_index].output_buffer, &response_header);
+                        new_packet(peer);
+                        APPEND(&peer->output_buffer, &response_header);
                         break;
                     }
 
@@ -281,7 +271,6 @@ int main() {
                             struct client_packet_update *input_update;
                             POP(&input_buffer, &input_update);
 
-                            struct peer *peer = &peers[peer_index];
                             struct update_log_entry entry = {
                                 .client_sim_tick = header->sim_tick,
                                 .server_net_tick = frame.network_tick,
@@ -295,10 +284,14 @@ int main() {
                     }
                 } break;
 
+                case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
                 case ENET_EVENT_TYPE_DISCONNECT: {
-                    u8 peer_index = *(u8 *) event.peer->data;
-                    struct peer *p = &peers[peer_index];
-                    printf("%d disconnected.\n", peer_index);
+                    PlayerId id = *(PlayerId *) event.peer->data;
+
+                    struct server_peer *peer = NULL;
+                    HashMapLookup(peer_map, id, peer);
+
+                    printf("%d disconnected (%s).\n", id, (event.type == ENET_EVENT_TYPE_DISCONNECT_TIMEOUT) ? "timeout" : "quit");
 
                     {
                         struct server_header response_header = {
@@ -306,50 +299,21 @@ int main() {
                         };
 
                         struct server_packet_peer_disconnected disc = {
-                            .peer_index = peer_index,
+                            .player_id = id,
                         };
 
-                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                            if (!peers[i].connected || i == peer_index)
+                        HashMapForEach(peer_map, struct server_peer, other_peer) {
+                            if (!HashMapExists(peer_map, other_peer) || other_peer == peer)
                                 continue;
-                            new_packet(&peers[i]);
-                            APPEND(&peers[i].output_buffer, &response_header);
-                            APPEND(&peers[i].output_buffer, &disc);
+                            new_packet(other_peer);
+                            APPEND(&other_peer->output_buffer, &response_header);
+                            APPEND(&other_peer->output_buffer, &disc);
                         }
                     }
 
-                    peer_disconnect(p);
-                    --num_peers;
-                    free(event.peer->data);
-                    event.peer->data = NULL;
-                } break;
-
-                case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: {
-                    u8 peer_index = *(u8 *) event.peer->data;
-                    struct peer *p = &peers[peer_index];
-                    printf("%d disconnected due to timeout.\n", peer_index);
-
-                    {
-                        struct server_header response_header = {
-                            .type = SERVER_PACKET_PEER_DISCONNECTED,
-                        };
-
-                        struct server_packet_peer_disconnected disc = {
-                            .peer_index = peer_index,
-                        };
-
-
-                        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                            if (!peers[i].connected || i == peer_index)
-                                continue;
-                            new_packet(&peers[i]);
-                            APPEND(&peers[i].output_buffer, &response_header);
-                            APPEND(&peers[i].output_buffer, &disc);
-                        }
-                    }
-
-                    peer_disconnect(p);
-                    --num_peers;
+                    byte_buffer_free(&peer->output_buffer);
+                    HashMapRemove(game.player_map, id);
+                    HashMapRemove(peer_map, id);
                     free(event.peer->data);
                     event.peer->data = NULL;
                 } break;
@@ -361,17 +325,19 @@ int main() {
             }
         }
 
-        for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-            if (!peers[i].connected)
+        HashMapForEach(peer_map, struct server_peer, peer) {
+            if (!HashMapExists(peer_map, peer))
                 continue;
-            struct peer *peer = &peers[i];
+
+            struct player *player = NULL;
+            HashMapLookup(game.player_map, peer->id, player);
 
             while (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
                 if (entry->client_sim_tick > frame.simulation_tick)
                     break;
 
-                move(&game, peer->player, &entry->input_update.input, frame.dt, false);
+                update_player(&game, player, &entry->input_update.input, frame.dt);
                 collect_and_resolve_static_collisions(&game);
 
                 // Send AUTH packet to peer
@@ -382,7 +348,7 @@ int main() {
 
                     struct server_packet_auth auth = {
                         .sim_tick = entry->client_sim_tick,
-                        .player = *peer->player,
+                        .player = *player,
                     };
 
                     new_packet(peer);
@@ -399,16 +365,15 @@ int main() {
 
                     struct server_packet_peer_auth peer_auth = {
                         .sim_tick = entry->client_sim_tick,
-                        .player = *peer->player,
-                        .peer_index = i,
+                        .player = *player,
                     };
 
-                    for (u8 j = 0; j < MAX_CLIENTS; ++j) {
-                        if (!peers[j].connected || i == j)
+                    HashMapForEach(peer_map, struct server_peer, other_peer) {
+                        if (!HashMapExists(peer_map, other_peer) || other_peer == peer)
                             continue;
-                        new_packet(&peers[j]);
-                        APPEND(&peers[j].output_buffer, &response_header);
-                        APPEND(&peers[j].output_buffer, &peer_auth);
+                        new_packet(other_peer);
+                        APPEND(&other_peer->output_buffer, &response_header);
+                        APPEND(&other_peer->output_buffer, &peer_auth);
                     }
                 }
 
@@ -421,20 +386,145 @@ int main() {
             //resolve_dynamic_collisions(&game, results, num_results);
         }
 
-        if (frame.simulation_tick % NET_PER_SIM_TICKS == 0) {
-            for (u8 i = 0; i < MAX_CLIENTS; ++i) {
-                if (!peers[i].connected)
+        ForEachList(respawn_list, struct respawn_list_item, item) {
+            item->time_left -= frame.dt;
+
+            if (item->time_left <= 0.0f) {
+                struct player *p = NULL;
+                HashMapLookup(game.player_map, item->id, p);
+
+                randomize_player_spawn(&random, game.map, p);
+                p->weapons[0] = PLAYER_WEAPON_SNIPER;
+                p->weapons[1] = PLAYER_WEAPON_NADE;
+                p->hue = 20.0f + 80.0f*random_next_unilateral(&random);
+                p->health = 100.0f;
+
+                struct server_peer *peer = NULL;
+                HashMapLookup(peer_map, item->id, peer);
+
+                {
+                    struct server_header response_header = {
+                        .type = SERVER_PACKET_PLAYER_SPAWN,
+                    };
+
+                    struct server_packet_player_spawn spawn = {
+                        .player = *p,
+                    };
+
+                    new_packet(peer);
+                    APPEND(&peer->output_buffer, &response_header);
+                    APPEND(&peer->output_buffer, &spawn);
+                }
+
+                ListTagRemovePtr(respawn_list, item);
+            }
+        }
+        ListRemoveTaggedItems(respawn_list);
+
+
+        ForEachList(game.new_nade_list, struct nade_projectile, nade) {
+            struct player *p = NULL;
+            HashMapLookup(game.player_map, nade->player_id_from, p);
+
+            // Loop over all connected peers and send kill packet
+            HashMapForEach(peer_map, struct server_peer, other_peer) {
+                if (!HashMapExists(peer_map, other_peer) || other_peer->id == p->id)
                     continue;
-                const size_t size = (intptr_t) peers[i].output_buffer.top - (intptr_t) peers[i].output_buffer.base;
+
+                {
+                    struct server_header header = {
+                        .type = SERVER_PACKET_NADE,
+                    };
+
+                    struct server_packet_nade nade_packet = {
+                        .nade = *nade,
+                    };
+
+                    new_packet(other_peer);
+                    APPEND(&other_peer->output_buffer, &header);
+                    APPEND(&other_peer->output_buffer, &nade_packet);
+                }
+            }
+        }
+
+        ForEachList(game.new_hitscan_list, struct hitscan_projectile, hitscan) {
+            struct player *p = NULL;
+            HashMapLookup(game.player_map, hitscan->player_id_from, p);
+
+            // Loop over all connected peers and send kill packet
+            HashMapForEach(peer_map, struct server_peer, other_peer) {
+                if (!HashMapExists(peer_map, other_peer) || other_peer->id == p->id)
+                    continue;
+
+                {
+                    struct server_header header = {
+                        .type = SERVER_PACKET_HITSCAN,
+                    };
+
+                    struct server_packet_hitscan hitscan_packet = {
+                        .hitscan = *hitscan,
+                    };
+
+                    new_packet(other_peer);
+                    APPEND(&other_peer->output_buffer, &header);
+                    APPEND(&other_peer->output_buffer, &hitscan_packet);
+                }
+            }
+        }
+        ListClear(game.new_nade_list);
+        ListClear(game.new_hitscan_list);
+
+        // Now it's time for per-frame updates
+        update_projectiles(&game, frame.dt);
+
+        // Apply damage
+        ForEachList(game.damage_list, struct damage_entry, d) {
+            struct player *p = NULL;
+            HashMapLookup(game.player_map, d->player_id, p);
+            p->health -= d->damage;
+
+            if (p->health <= 0.0f) {
+                struct respawn_list_item item = {p->id, 1.0f};
+                ListInsert(respawn_list, item);
+
+                // Loop over all connected peers and send kill packet
+                HashMapForEach(peer_map, struct server_peer, other_peer) {
+                    if (!HashMapExists(peer_map, other_peer))
+                        continue;
+
+                    {
+                        struct server_header header = {
+                            .type = SERVER_PACKET_PLAYER_KILL,
+                        };
+
+                        struct server_packet_player_kill kill = {
+                            .player_id = p->id,
+                        };
+
+                        new_packet(other_peer);
+                        APPEND(&other_peer->output_buffer, &header);
+                        APPEND(&other_peer->output_buffer, &kill);
+                    }
+                }
+            }
+        }
+        ListClear(game.damage_list);
+
+        // If we're on a network tick, then send batch
+        if (frame.simulation_tick % NET_PER_SIM_TICKS == 0) {
+            HashMapForEach(peer_map, struct server_peer, peer) {
+                if (!HashMapExists(peer_map, peer))
+                    continue;
+                const size_t size = (intptr_t) peer->output_buffer.top - (intptr_t) peer->output_buffer.base;
                 if (size > sizeof(struct server_batch_header)) {
-                    ENetPacket *packet = enet_packet_create(peers[i].output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
-                    enet_peer_send(peers[i].enet_peer, 0, packet);
-                    peers[i].output_buffer.top = peers[i].output_buffer.base;
+                    ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
+                    enet_peer_send(peer->enet_peer, 0, packet);
+                    peer->output_buffer.top = peer->output_buffer.base;
 
                     struct server_batch_header batch = {
                         .num_packets = 0,
                     };
-                    APPEND(&peers[i].output_buffer, &batch);
+                    APPEND(&peer->output_buffer, &batch);
                 }
             }
         }
@@ -445,6 +535,8 @@ int main() {
         BeginDrawing();
         ClearBackground(RAYWHITE);
         //draw_game(&game, t);
+
+        draw_all_debug_v2s((struct camera) {0});
 
         DrawText("server", 10, 10, 20, BLACK);
         if (frame.simulation_tick % FPS == 0) {

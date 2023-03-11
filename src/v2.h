@@ -73,3 +73,8 @@ static inline v2 v2reflect(v2 v, v2 r) {
     const f32 amount_in_dir = v2dot(v, r);
     return v2add(v, v2scale(-2.0f*amount_in_dir, r));
 }
+
+// Returns the angle of v in the range [0,2pi)
+static inline f32 v2angle(v2 v) {
+    return M_PI + atan2f(v.y, v.x);
+}

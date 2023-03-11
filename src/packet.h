@@ -1,8 +1,8 @@
 #pragma once
 
 #include "common.h"
-#include "update.h"
 #include "v2.h"
+#include "game.h"
 
 enum server_packet_type {
     SERVER_PACKET_GREETING,
@@ -11,6 +11,10 @@ enum server_packet_type {
     SERVER_PACKET_AUTH,
     SERVER_PACKET_PEER_AUTH,
     SERVER_PACKET_PEER_DISCONNECTED,
+    SERVER_PACKET_PLAYER_KILL,
+    SERVER_PACKET_PLAYER_SPAWN,
+    SERVER_PACKET_HITSCAN,
+    SERVER_PACKET_NADE,
 };
 
 enum client_packet_type {
@@ -41,14 +45,10 @@ struct client_header {
 struct server_packet_greeting {
     u64 initial_net_tick;
     u64 id;
-    v2 initial_pos;
-    u8 peer_index;
 };
 
 struct server_packet_peer_greeting {
-    v2 initial_pos;
     u64 id;
-    f32 health;
     u8 peer_index;
 };
 
@@ -64,7 +64,23 @@ struct server_packet_peer_auth {
 };
 
 struct server_packet_peer_disconnected {
-    u8 peer_index;
+    PlayerId player_id;
+};
+
+struct server_packet_player_spawn {
+    struct player player;
+};
+
+struct server_packet_player_kill {
+    u64 player_id;
+};
+
+struct server_packet_hitscan {
+    struct hitscan_projectile hitscan;
+};
+
+struct server_packet_nade {
+    struct nade_projectile nade;
 };
 
 struct client_packet_update {

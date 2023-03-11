@@ -1,8 +1,10 @@
-Client:
-    - [ ]
-
-Server:
-    - [ ]
+What do I need to make this game playable?
+     - spatial audio
+        - volume decrease at distance
+        - pan depending on which side it happens
+    - step sounds
+    - render weapons
+    - tune movements
 
 Game idea:
     - multiplayer + cooperative

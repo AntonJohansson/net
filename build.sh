@@ -1,18 +1,23 @@
 #!/bin/sh
 
-CC=clang
-BUILDDIR=build
-CLIENT=${BUILDDIR}/client
-SERVER=${BUILDDIR}/server
-CFLAGS="-fsanitize=address -g -O2 -lpthread -lm -std=gnu2x -Wno-constant-logical-operand"
+CC=gcc
+BUILD=build
+THIRD_PARTY=third_party
+CLIENT=${BUILD}/client
+SERVER=${BUILD}/server
+CFLAGS="-fsanitize=address -g -O0 -lpthread -lm -std=gnu2x -Wno-constant-logical-operand -I${BUILD}/raylib/raylib/include"
 
-[ ! -d ${BUILDDIR} ] && mkdir ${BUILDDIR}
+# Create build directory if needed
+[ ! -d ${BUILD} ] && mkdir ${BUILD}
 
-if [ "$1" = "nodraw" ]; then
-    ${CC} -o ${SERVER}-nodraw ${CFLAGS} src/server.c                              &
-else
-    ${CC} -o ${SERVER}        ${CFLAGS} src/server.c src/draw.c -lraylib -DDRAW   &
-    ${CC} -o ${CLIENT}        ${CFLAGS} src/client.c src/draw.c -lraylib -DCLIENT &
-fi
+# Initialize git submodules if needed
+[ ! -d ${THIRD_PARTY}/raylib ] && git submodule update --init
+
+# Build raylib if needed
+[ ! -d ${BUILD}/raylib ] && mkdir ${BUILD}/raylib && cmake -DUSE_WAYLAND=on -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${BUILD} -S ${THIRD_PARTY}/raylib -B ${BUILD}/raylib && make -j16 -C ${BUILD}/raylib && make install -C ${BUILD}/raylib
+
+${CC} -o ${SERVER}-nodraw ${CFLAGS} src/server.c src/game.c ${BUILD}/lib/libraylib.a &
+${CC} -o ${SERVER}        ${CFLAGS} src/server.c src/game.c src/draw.c src/audio.c ${BUILD}/lib/libraylib.a -DDRAW &
+${CC} -o ${CLIENT}        ${CFLAGS} src/client.c src/game.c src/draw.c src/audio.c ${BUILD}/lib/libraylib.a -DDRAW -DCLIENT &
 
 wait

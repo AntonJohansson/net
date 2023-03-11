@@ -2,8 +2,10 @@
 
 #include "common.h"
 #include "v2.h"
+#include "game.h"
+
 #include <raylib.h>
-#include <stdlib.h>
+#include <string.h>
 
 struct graph {
     f32 *data;
@@ -53,5 +55,5 @@ v2 screen_to_world(struct camera c, Vector2 v);
 void debug_v2(v2 pos, v2 v, f32 scale, Color color);
 void draw_all_debug_v2s(struct camera c);
 
-void draw_game(struct camera c, struct game *game, const f32 t);
+void draw_game(struct camera c, struct game *game, PlayerId main_player_id, const f32 t);
 void draw_graph(struct graph *g, v2 pos, v2 size, v2 margin);

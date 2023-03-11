@@ -11,6 +11,7 @@ uniform int light_resolution;
 uniform int light_mode;
 uniform float cone_angle;
 uniform float cone_width;
+uniform float cone_length;
 
 in vec4 fragColor;
 
@@ -90,7 +91,7 @@ void main(void) {
         sum += sample_cone(shadowmap_angle + 2.0*PI*4.0*blur, radius) * 0.05;
     }
 
-    finalColor = fragColor * vec4(vec3(1.0), sum * smoothstep(1.0, 0.0, radius));
+    finalColor = fragColor * vec4(vec3(1.0), sum * smoothstep(cone_length, 0.0, radius));
     //finalColor = fragColor * vec4(vec3(1.0), center);
     //finalColor = vec4(vec3(radius),1);
 }
