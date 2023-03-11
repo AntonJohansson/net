@@ -185,8 +185,6 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct server_packet_greeting *greeting = (struct server_packet_greeting *) p;
                             p += sizeof(struct server_packet_greeting);
 
-                            printf("yess\n");
-
                             frame.network_tick = greeting->initial_net_tick + initial_server_net_tick_offset;
                             frame.simulation_tick = frame.network_tick * NET_PER_SIM_TICKS;
 

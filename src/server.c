@@ -332,8 +332,6 @@ int main() {
             struct player *player = NULL;
             HashMapLookup(game.player_map, peer->id, player);
 
-            printf("%u\n", peer->update_log.used);
-
             while (peer->update_log.used > 0) {
                 struct update_log_entry *entry = &peer->update_log.data[peer->update_log.bottom];
                 if (entry->client_sim_tick > frame.simulation_tick)
