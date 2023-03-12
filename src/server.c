@@ -524,7 +524,7 @@ int main() {
                     continue;
                 const size_t size = (intptr_t) peer->output_buffer.top - (intptr_t) peer->output_buffer.base;
                 if (size > sizeof(struct server_batch_header)) {
-                    ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
+                    ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_UNSEQUENCED);
                     enet_peer_send(peer->enet_peer, 0, packet);
                     peer->output_buffer.top = peer->output_buffer.base;
 

@@ -157,8 +157,10 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             //u64 after = time_current();
             //printf("%u vs %u\n", before, after);
             //adjustment = 0;
+            //time_nanosleep(frame.desired_delta);
+            //++adjustment;
         } else if (adjustment > 0) {
-            printf("We are behind!\n");
+            //printf("We are behind!\n");
             sleep_this_frame = false;
             --adjustment;
         }
@@ -174,16 +176,17 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                     p += sizeof(struct server_batch_header);
 
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
-                        printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
+                        //printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
                         ++adjustment_iteration;
 
                         if (adjustment < 0) {
-                            u64 before = time_current();
-                            time_nanosleep(2*(-adjustment)*frame.desired_delta);
-                            u64 after = time_current();
-                            printf("%u vs %u\n", before-after, 2*(-adjustment)*frame.desired_delta);
+                            //u64 before = time_current();
+                            time_nanosleep((-adjustment)*frame.desired_delta);
+                            //u64 after = time_current();
+                            //printf("%u vs %u\n", after-before, (-adjustment)*frame.desired_delta);
+                            //++adjustment;
                             adjustment = 0;
                         } else if (adjustment > 0) {
                             sleep_this_frame = false;
@@ -420,7 +423,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 struct client_batch_header *batch = (void *) output_buffer.base;
                 batch->net_tick = frame.network_tick;
                 batch->adjustment_iteration = adjustment_iteration;
-                ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
+                ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_UNSEQUENCED);
                 enet_peer_send(peer, 0, packet);
                 output_buffer.top = output_buffer.base;
 
