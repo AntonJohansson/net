@@ -152,9 +152,11 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         bool sleep_this_frame = true;
 
         if (adjustment < 0) {
-            printf("We are ahead, sleeping %d\n", frame.desired_delta);
-            time_nanosleep((-adjustment)*frame.desired_delta);
-            adjustment = 0;
+            //printf("We are ahead, sleeping %d\n", frame.desired_delta);
+            //time_nanosleep(2*NET_PER_SIM_TICKS*(-adjustment)*frame.desired_delta);
+            //u64 after = time_current();
+            //printf("%u vs %u\n", before, after);
+            //adjustment = 0;
         } else if (adjustment > 0) {
             printf("We are behind!\n");
             sleep_this_frame = false;
@@ -172,10 +174,21 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                     p += sizeof(struct server_batch_header);
 
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
-                        printf("We have %d adjustment\n", batch->adjustment);
+                        printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
                         ++adjustment_iteration;
+
+                        if (adjustment < 0) {
+                            u64 before = time_current();
+                            time_nanosleep(2*(-adjustment)*frame.desired_delta);
+                            u64 after = time_current();
+                            printf("%u vs %u\n", before-after, 2*(-adjustment)*frame.desired_delta);
+                            adjustment = 0;
+                        } else if (adjustment > 0) {
+                            sleep_this_frame = false;
+                            --adjustment;
+                        }
                     }
 
                     for (u16 packet = 0; packet < batch->num_packets; ++packet) {
