@@ -231,7 +231,7 @@ int main() {
                     i64 tick = (i64) ((struct client_header *) input_buffer.top)->sim_tick;
 
                     i8 adjustment = 0;
-                    i64 diff = (i64) frame.simulation_tick + (VALID_TICK_WINDOW-1) - tick;
+                    i64 diff = (i64) frame.simulation_tick + (VALID_TICK_WINDOW) - tick;
                     if (diff < INT8_MIN || diff > INT8_MAX) {
                         printf("net_tick diff outside range of adjustment variable!\n");
                         // TODO(anjo): what do?
