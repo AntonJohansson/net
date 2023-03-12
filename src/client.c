@@ -148,6 +148,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         // Begin frame
         const u64 frame_start = time_current();
 
+        printf("simulation tick: %llu\n", frame.simulation_tick);
+
         bool run_network_tick = frame.simulation_tick % NET_PER_SIM_TICKS == 0;
         bool sleep_this_frame = true;
 

@@ -127,6 +127,8 @@ int main() {
     while (running) {
         const u64 frame_start = time_current();
 
+        printf("simulation tick: %llu\n", frame.simulation_tick);
+
         // Handle network
         if (frame.simulation_tick % NET_PER_SIM_TICKS == 0) {
             while (enet_host_service(server, &event, 0) > 0) {
