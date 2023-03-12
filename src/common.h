@@ -20,7 +20,7 @@ typedef double   f64;
 
 #define MAX_CLIENTS 128
 #define FPS 60
-#define NET_PER_SIM_TICKS 2
+#define NET_PER_SIM_TICKS 1
 
 #define ARRLEN(arr) (sizeof(arr)/sizeof(arr[0]))
 

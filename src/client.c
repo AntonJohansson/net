@@ -52,7 +52,7 @@ struct camera camera = {0};
 // Network
 //
 
-const u64 initial_server_net_tick_offset = 12;
+const u64 initial_server_net_tick_offset = 5;
 
 struct peer_auth_buffer {
     struct server_packet_peer_auth data[UPDATE_LOG_BUFFER_SIZE];
@@ -433,8 +433,12 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
             }
             if (!isinf(fps)) {
-                DrawText(TextFormat("fps: %.0f", fps), 10, 30, 20, GRAY);
-                DrawText(TextFormat("ping: %d", total_adjustment), 10, 50, 20, GRAY);
+                int y = 30;
+                DrawText(TextFormat("fps: %.0f", fps), 10, y, 20, GRAY); y += 20;
+                DrawText(TextFormat("ping: %u", peer->roundTripTime), 10, y, 20, GRAY); y += 20;
+                DrawText(TextFormat("in  bandwidth: %u bytes/s", peer->incomingBandwidth), 10, y, 20, GRAY); y += 20;
+                DrawText(TextFormat("out bandwidth: %u bytes/s", peer->outgoingBandwidth), 10, y, 20, GRAY); y += 20;
+                DrawText(TextFormat("total adjustment: %d", total_adjustment), 10, y, 20, GRAY); y += 20;
             }
 
             //graph_append(&graph, v2len(player->velocity));
