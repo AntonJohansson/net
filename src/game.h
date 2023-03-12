@@ -33,10 +33,10 @@ enum input_type {
     INPUT_LAST,
 };
 
-struct __attribute__((packed)) input {
+Pack(struct input {
     v2 look;
     bool active[INPUT_LAST];
-};
+});
 
 //
 // Player
@@ -54,7 +54,7 @@ enum player_weapon {
 
 typedef u64 PlayerId;
 
-struct __attribute__((packed)) player {
+Pack(struct player {
     PlayerId id;
 
     v2 pos;
@@ -82,7 +82,7 @@ struct __attribute__((packed)) player {
     f32 sniper_zoom;
 
     enum player_state state;
-};
+});
 
 //
 // Map
@@ -149,7 +149,7 @@ static inline u8 map_at(const struct map *map, v2 at) {
 // Projectiles
 //
 
-struct __attribute__((packed)) nade_projectile {
+Pack(struct nade_projectile {
     PlayerId player_id_from;
     v2 dir;
     v2 start_pos;
@@ -158,7 +158,7 @@ struct __attribute__((packed)) nade_projectile {
     v2 impact;
     f32 impact_distance;
     f32 time_left;
-};
+});
 
 struct explosion {
     v2 pos;
@@ -166,14 +166,14 @@ struct explosion {
     f32 time_left;
 };
 
-struct __attribute__((packed)) hitscan_projectile {
+Pack(struct hitscan_projectile {
     PlayerId player_id_from;
     PlayerId player_id_to;
     v2 dir;
     v2 pos;
     v2 impact;
     f32 time_left;
-};
+});
 
 struct damage_entry {
     PlayerId player_id;

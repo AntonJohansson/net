@@ -27,6 +27,12 @@ typedef double   f64;
 #define ArrayPtrToIndex(arr, ptr) \
     (((intptr_t) ptr - (intptr_t) &arr[0])/sizeof(arr[0]))
 
+#if defined(__GNUC__) || defined(__clang__)
+    #define Pack(decl) decl __attribute__((packed))
+#elif defined(_MSC_VER)
+    #define Pack(decl) __pragma(pack(push,1)) decl __pragma(pack(pop))
+#endif
+
 //
 // Float stuff
 //
@@ -59,10 +65,34 @@ static inline f32 f32_clamp(f32 x, f32 a, f32 b) {
 
 #define NANOSECONDS(n) (1000000000ull*(n))
 
+#if defined(_WIN32)
+#include "windows_garbage.h.inc"
+#include <windows.h>
+#undef PlaySound
+static u64 win32_frequency = 0;
+#endif
+
+static inline void time_init() {
+#if defined(_WIN32)
+    QueryPerformanceFrequency((LARGE_INTEGER*) &win32_frequency);
+#endif
+    // Taken from raylib
+//#if defined(_WIN32) && defined(SUPPORT_WINMM_HIGHRES_TIMER)
+//    // Setup high-resolution timer to 1ms (granularity of 1-2 ms)
+//    timeBeginPeriod(1);                 
+//#endif
+}
+
 static inline u64 time_current() {
+#if defined(__linux__)
     struct timespec t;
     assert(clock_gettime(CLOCK_MONOTONIC, &t) == 0);
     return t.tv_sec * NANOSECONDS(1) + t.tv_nsec;
+#elif defined(_WIN32)
+    u64 counter;
+    QueryPerformanceCounter((LARGE_INTEGER*) &counter);
+    return NANOSECONDS(counter)/win32_frequency;
+#endif
 }
 
 static inline void time_nanosleep(u64 t) {
@@ -71,9 +101,18 @@ static inline void time_nanosleep(u64 t) {
     //};
     //while(nanosleep(&ts, NULL) == -1) {}
 
+    //u64 start = time_current();
+    //while (time_current() - start < t) {}
+
+#if defined(__linux__)
+    u64 start = time_current();
+    while (time_current() - start < t) {}
+#else
+    //Sleep((50*t/100) / 1000000);
 
     u64 start = time_current();
     while (time_current() - start < t) {}
+#endif
 }
 
 //

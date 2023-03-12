@@ -626,43 +626,43 @@ void collect_and_resolve_static_collisions(struct game *game) {
 
 void collect_dynamic_collisions(struct game *game, struct collision_result *results, u32 *num_results, u32 max_results) {
     // Condense hash map to array, this will help with quick iteration
-    struct player *players[game->player_map.num_items];
-    size_t index = 0;
-    HashMapForEach(game->player_map, struct player, p) {
-        if (!HashMapExists(game->player_map, p))
-            continue;
-        players[index++] = p;
-    }
+    //struct player *players[game->player_map.num_items];
+    //size_t index = 0;
+    //HashMapForEach(game->player_map, struct player, p) {
+    //    if (!HashMapExists(game->player_map, p))
+    //        continue;
+    //    players[index++] = p;
+    //}
 
-    *num_results = 0;
-    for (i32 i = 0; i < game->player_map.num_items; ++i) {
-        struct player *p0 = players[i];
-        for (i32 j = i+1; j < game->player_map.num_items; ++j) {
-            struct player *p1 = players[j];
+    //*num_results = 0;
+    //for (i32 i = 0; i < game->player_map.num_items; ++i) {
+    //    struct player *p0 = players[i];
+    //    for (i32 j = i+1; j < game->player_map.num_items; ++j) {
+    //        struct player *p1 = players[j];
 
-            const f32 radius = 0.25f;
-            struct collision_result result = collide_circle_circle((struct circle) {
-                                                                       .pos = p0->pos,
-                                                                       .radius = radius
-                                                                   },
-                                                                   (struct circle) {
-                                                                       .pos = p1->pos,
-                                                                       .radius = radius
-                                                                   });
-            if (!result.colliding)
-                continue;
+    //        const f32 radius = 0.25f;
+    //        struct collision_result result = collide_circle_circle((struct circle) {
+    //                                                                   .pos = p0->pos,
+    //                                                                   .radius = radius
+    //                                                               },
+    //                                                               (struct circle) {
+    //                                                                   .pos = p1->pos,
+    //                                                                   .radius = radius
+    //                                                               });
+    //        if (!result.colliding)
+    //            continue;
 
-            if (v2iszero(result.resolve))
-                continue;
+    //        if (v2iszero(result.resolve))
+    //            continue;
 
-            result.id0 = p0->id;
-            result.id1 = p1->id;
+    //        result.id0 = p0->id;
+    //        result.id1 = p1->id;
 
-            results[(*num_results)++] = result;
-            if (*num_results >= max_results)
-                return;
-        }
-    }
+    //        results[(*num_results)++] = result;
+    //        if (*num_results >= max_results)
+    //            return;
+    //    }
+    //}
 }
 
 void resolve_dynamic_collisions(struct game *game, struct collision_result *results, u32 num_results) {

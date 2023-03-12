@@ -1,3 +1,9 @@
+// Third party includes
+#include <raylib.h>
+#include "windows_garbage.h.inc"
+#define ENET_IMPLEMENTATION
+#include "enet.h"
+
 // Our includes
 #include "packet.h"
 #include "common.h"
@@ -5,13 +11,7 @@
 #include "color.h"
 #include "game.h"
 #include "audio.h"
-#include  "draw.h"
-
-// Third party includes
-#define ENET_IMPLEMENTATION
-#include "enet.h"
-
-#include <raylib.h>
+#include "draw.h"
 
 // stdlib
 #include <stdio.h>
@@ -469,7 +469,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             camera.target = player->pos;
             draw_game(camera, &game, main_player_id, t);
 
-            //DrawText("client", 10, 10, 20, BLACK);
+            DrawText("client", 10, 10, 20, BLACK);
             if (frame.simulation_tick % FPS == 0) {
                 f64 geomean = 1.0f;
                 for (size_t i = 0; i < ARRLEN(total_frame_time_samples); ++i) {
@@ -521,7 +521,11 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
     graph_free(&graph);
 }
 
+#if defined(_WIN32)
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+#else
 int main(int argc, char **argv) {
+#endif
     if (enet_initialize() != 0) {
         fprintf(stderr, "An error occurred while initializing ENet.\n");
         return EXIT_FAILURE;
@@ -529,10 +533,10 @@ int main(int argc, char **argv) {
 
     draw_init();
     audio_init();
+    time_init();
 
     struct byte_buffer output_buffer = byte_buffer_alloc(OUTPUT_BUFFER_SIZE);
     APPEND(&output_buffer, &(struct client_batch_header){0});
-
 
     MenuState menu_state = START;
 
@@ -546,10 +550,12 @@ int main(int argc, char **argv) {
     // If we have a first argument, assume it's an ip
     // and connect to it, skipping the intial input
     // menu state.
+#if !defined(_WIN32)
     if (argc > 1) {
         strncpy(input, argv[1], ARRLEN(input));
         menu_state = CONNECTING;
     }
+#endif
 
     // Net stuff
     ENetHost *client = {0};
