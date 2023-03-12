@@ -179,7 +179,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                     p += sizeof(struct server_batch_header);
 
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
-                        //printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
+                        printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
                         ++adjustment_iteration;
