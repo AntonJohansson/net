@@ -260,6 +260,7 @@ int main() {
                         };
 
                         printf("Dropping packet, too early: net_tick %lu, should be >= %lu\n", batch->net_tick, frame.network_tick);
+                        printf("adjustment (%u): %d\n", batch->adjustment_iteration, adjustment);
 
                         new_packet(peer);
                         APPEND(&peer->output_buffer, &response_header);
