@@ -136,7 +136,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
     i32 total_adjustment = 0;
 
     struct frame frame = {
-        .desired_delta = 30000 + NANOSECONDS(1) / (f32) FPS,
+        .desired_delta = NANOSECONDS(1) / (f32) FPS,
         .dt = 1.0f / (f32) FPS,
     };
 
@@ -184,13 +184,24 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                     struct server_batch_header *batch = (struct server_batch_header *) p;
                     p += sizeof(struct server_batch_header);
 
+                    avg_drift = batch->avg_drift;
+
+                    if (avg_drift < 100000 && avg_drift > -100000){
+                        printf("avg_drift: %lld\n", avg_drift);
+
+                        i64 delta = avg_drift + NANOSECONDS(1) / (f32) FPS;
+                        if (delta > 0)
+                            frame.desired_delta = delta;
+                        else
+                            frame.desired_delta = NANOSECONDS(1) / (f32) FPS;
+                    }
+
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
                         printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
-                        avg_drift = batch->avg_drift;
-                        printf("avg_drift: %lld", avg_drift);
-                        frame.desired_delta -= avg_drift;
+
+
                         ++adjustment_iteration;
 
                         if (adjustment < 0) {
