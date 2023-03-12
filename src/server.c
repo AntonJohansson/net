@@ -20,7 +20,7 @@
 #define OUTPUT_BUFFER_SIZE 32000
 #define INPUT_BUFFER_LENGTH 16
 #define UPDATE_LOG_BUFFER_SIZE 512
-#define VALID_TICK_WINDOW 5
+#define VALID_TICK_WINDOW 2
 
 bool running = true;
 
