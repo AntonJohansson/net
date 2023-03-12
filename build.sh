@@ -16,8 +16,8 @@ CFLAGS="-fsanitize=address -g -O3 -lpthread -lm -std=gnu2x -Wno-constant-logical
 # Build raylib if needed
 [ ! -d ${BUILD}/raylib ] && mkdir ${BUILD}/raylib && cmake -DUSE_WAYLAND=on -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${BUILD} -S ${THIRD_PARTY}/raylib -B ${BUILD}/raylib && make -j16 -C ${BUILD}/raylib && make install -C ${BUILD}/raylib
 
-${CC} -o ${SERVER}-nodraw ${CFLAGS} src/server.c src/game.c ${BUILD}/lib/libraylib.a &
-${CC} -o ${SERVER}        ${CFLAGS} src/server.c src/game.c src/draw.c src/audio.c ${BUILD}/lib/libraylib.a -DDRAW &
+${CC} -o ${SERVER}-nodraw ${CFLAGS} src/server.c src/game.c &
+#${CC} -o ${SERVER}        ${CFLAGS} src/server.c src/game.c src/draw.c src/audio.c ${BUILD}/lib/libraylib.a -DDRAW &
 ${CC} -o ${CLIENT}        ${CFLAGS} src/client.c src/game.c src/draw.c src/audio.c ${BUILD}/lib/libraylib.a -DDRAW -DCLIENT &
 
 wait
