@@ -144,8 +144,11 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
     bool mute = false;
 
+    u64 total_delta = 0;
+
     while (running) {
         // Begin frame
+        const u64 total_frame_start = time_current();
         const u64 frame_start = time_current();
 
         bool run_network_tick = frame.simulation_tick % NET_PER_SIM_TICKS == 0;
@@ -423,7 +426,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 struct client_batch_header *batch = (void *) output_buffer.base;
                 batch->net_tick = frame.network_tick;
                 batch->adjustment_iteration = adjustment_iteration;
-                ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_UNSEQUENCED);
+                ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
                 enet_peer_send(peer, 0, packet);
                 output_buffer.top = output_buffer.base;
 
@@ -450,7 +453,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             }
             if (!isinf(fps)) {
                 int y = 30;
-                DrawText(TextFormat("fps: %.0f", fps), 10, y, 20, GRAY); y += 20;
+                DrawText(TextFormat("fps: %.0f (%.0f)", fps, 1000000000.0f/((f32)total_delta)), 10, y, 20, GRAY); y += 20;
                 DrawText(TextFormat("ping: %u", peer->roundTripTime), 10, y, 20, GRAY); y += 20;
                 DrawText(TextFormat("in  bandwidth: %u bytes/s", peer->incomingBandwidth), 10, y, 20, GRAY); y += 20;
                 DrawText(TextFormat("out bandwidth: %u bytes/s", peer->outgoingBandwidth), 10, y, 20, GRAY); y += 20;
@@ -474,6 +477,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             if (frame.delta < frame.desired_delta) {
                 time_nanosleep(frame.desired_delta - frame.delta);
             }
+            const u64 total_frame_end = time_current();
+            total_delta = total_frame_end - total_frame_start;
         }
 
         if (run_network_tick)

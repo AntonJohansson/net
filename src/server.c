@@ -124,7 +124,10 @@ int main() {
 
     List(struct respawn_list_item, MAX_CLIENTS) respawn_list = {0};
 
+    u64 total_delta = 0;
+
     while (running) {
+        const u64 total_frame_start = time_current();
         const u64 frame_start = time_current();
 
         printf("simulation tick: %llu\n", frame.simulation_tick);
@@ -524,7 +527,7 @@ int main() {
                     continue;
                 const size_t size = (intptr_t) peer->output_buffer.top - (intptr_t) peer->output_buffer.base;
                 if (size > sizeof(struct server_batch_header)) {
-                    ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_UNSEQUENCED);
+                    ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
                     enet_peer_send(peer->enet_peer, 0, packet);
                     peer->output_buffer.top = peer->output_buffer.base;
 
@@ -557,7 +560,7 @@ int main() {
         if (frame.simulation_tick % FPS == 0) {
             fps = 1.0f / ((f32)frame.delta/(f32)NANOSECONDS(1));
             if (!isinf(fps))
-                printf("fps: %.0f\n", fps);
+                printf("fps: %.0f (%.0f)\n", fps, 1000000000.0f/((f32)total_delta));
         }
 #endif
 
@@ -567,6 +570,8 @@ int main() {
         if (frame.delta < frame.desired_delta) {
             time_nanosleep(frame.desired_delta - frame.delta);
         }
+        const u64 total_frame_end = time_current();
+        total_delta = total_frame_end - total_frame_start;
         if (frame.simulation_tick % NET_PER_SIM_TICKS == 0)
             ++frame.network_tick;
         ++frame.simulation_tick;
