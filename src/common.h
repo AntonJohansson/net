@@ -66,10 +66,14 @@ static inline u64 time_current() {
 }
 
 static inline void time_nanosleep(u64 t) {
-    struct timespec ts = {
-        .tv_nsec = t,
-    };
-    while(nanosleep(&ts, NULL) == -1) {}
+    //struct timespec ts = {
+    //    .tv_nsec = t,
+    //};
+    //while(nanosleep(&ts, NULL) == -1) {}
+
+
+    u64 start = time_current();
+    while (time_current() - start < t) {}
 }
 
 //
