@@ -56,6 +56,7 @@ struct server_peer {
     struct update_log_buffer update_log;
     struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
+    bool has_specified_adjustment_this_frame;
 };
 
 static inline void new_packet(struct server_peer *p) {
@@ -247,6 +248,7 @@ int main() {
                         struct server_batch_header *server_batch = (void *) peer->output_buffer.base;
                         server_batch->adjustment = adjustment;
                         server_batch->adjustment_iteration = batch->adjustment_iteration;
+                        peer->has_specified_adjustment_this_frame = true;
                     }
 
                     if (tick >= frame.simulation_tick) {
@@ -529,6 +531,8 @@ int main() {
                     ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
                     enet_peer_send(peer->enet_peer, 0, packet);
                     peer->output_buffer.top = peer->output_buffer.base;
+
+                    peer->has_specified_adjustment_this_frame = false;
 
                     struct server_batch_header batch = {
                         .num_packets = 0,
