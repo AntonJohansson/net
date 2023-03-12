@@ -136,7 +136,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
     i32 total_adjustment = 0;
 
     struct frame frame = {
-        .desired_delta = NANOSECONDS(1) / (f32) FPS,
+        .desired_delta = 20000 + NANOSECONDS(1) / (f32) FPS,
         .dt = 1.0f / (f32) FPS,
     };
 
@@ -164,8 +164,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             //u64 after = time_current();
             //printf("%u vs %u\n", before, after);
             //adjustment = 0;
-            time_nanosleep(frame.desired_delta);
-            ++adjustment;
+            //time_nanosleep(frame.desired_delta);
+            //++adjustment;
         } else if (adjustment > 0) {
             //printf("We are behind!\n");
             sleep_this_frame = false;
@@ -188,17 +188,17 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         total_adjustment += adjustment;
                         ++adjustment_iteration;
 
-                        //if (adjustment < 0) {
-                        //    //u64 before = time_current();
-                        //    time_nanosleep((-adjustment)*frame.desired_delta);
-                        //    //u64 after = time_current();
-                        //    //printf("%u vs %u\n", after-before, (-adjustment)*frame.desired_delta);
-                        //    //++adjustment;
-                        //    adjustment = 0;
-                        //} else if (adjustment > 0) {
-                        //    sleep_this_frame = false;
-                        //    --adjustment;
-                        //}
+                        if (adjustment < 0) {
+                            //u64 before = time_current();
+                            time_nanosleep((-adjustment)*frame.desired_delta);
+                            //u64 after = time_current();
+                            //printf("%u vs %u\n", after-before, (-adjustment)*frame.desired_delta);
+                            //++adjustment;
+                            adjustment = 0;
+                        } else if (adjustment > 0) {
+                            sleep_this_frame = false;
+                            --adjustment;
+                        }
                     }
 
                     for (u16 packet = 0; packet < batch->num_packets; ++packet) {
