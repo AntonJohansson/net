@@ -20,7 +20,7 @@
 #define OUTPUT_BUFFER_SIZE 32000
 #define INPUT_BUFFER_LENGTH 16
 #define UPDATE_LOG_BUFFER_SIZE 512
-#define VALID_TICK_WINDOW 2
+#define VALID_TICK_WINDOW 5
 
 bool running = true;
 
@@ -232,13 +232,13 @@ int main() {
                     i64 tick = (i64) ((struct client_header *) input_buffer.top)->sim_tick;
 
                     i8 adjustment = 0;
-                    i64 diff = (i64) frame.simulation_tick + (VALID_TICK_WINDOW) - tick;
+                    i64 diff = (i64) frame.simulation_tick + (VALID_TICK_WINDOW-1) - tick;
                     if (diff < INT8_MIN || diff > INT8_MAX) {
                         printf("net_tick diff outside range of adjustment variable!\n");
                         // TODO(anjo): what do?
                         break;
                     }
-                    if (diff < -(VALID_TICK_WINDOW) || diff > 0) {
+                    if (diff < -(VALID_TICK_WINDOW-1) || diff > 0) {
                         // Need adjustment
                         adjustment = (i8) diff;
                     }
