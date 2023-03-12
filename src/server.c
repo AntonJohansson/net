@@ -127,6 +127,11 @@ int main() {
 
     u64 total_delta = 0;
 
+    u64 total_frame_time_samples[16] = {0};
+    size_t total_frame_time_sample = 0;
+
+    u64 client_avg_total_frame_time = 0;
+
     while (running) {
         const u64 total_frame_start = time_current();
         const u64 frame_start = time_current();
@@ -223,6 +228,8 @@ int main() {
                     struct byte_buffer input_buffer = byte_buffer_init(event.packet->data, event.packet->dataLength);
                     struct client_batch_header *batch;
                     POP(&input_buffer, &batch);
+
+                    client_avg_total_frame_time = batch->avg_total_frame_time;
 
                     const PlayerId id = *(PlayerId *)event.peer->data;
 
@@ -562,8 +569,17 @@ int main() {
 #else
         if (frame.simulation_tick % FPS == 0) {
             fps = (f32)NANOSECONDS(1) / ((f32)frame.delta);
+            f64 geomean = 1.0f;
+            for (size_t i = 0; i < ARRLEN(total_frame_time_samples); ++i) {
+                geomean *= (f64) total_frame_time_samples[i];
+            }
+            geomean = pow(geomean, 1.0f/((f64) ARRLEN(total_frame_time_samples)));
+            u64 avg_total_frame_time = (u64) geomean;
             if (!isinf(fps))
-                printf("fps: %.0f (%.0f)\n", fps, 1000000000.0f/((f32)total_delta));
+                printf("fps: %.0f (%.0f) (%llu) (%llu) (%lld)\n", fps, 1000000000.0f/((f32)total_delta),
+                       avg_total_frame_time,
+                       client_avg_total_frame_time,
+                       avg_total_frame_time - client_avg_total_frame_time);
         }
 #endif
 
@@ -575,6 +591,10 @@ int main() {
         }
         const u64 total_frame_end = time_current();
         total_delta = total_frame_end - total_frame_start;
+
+        total_frame_time_samples[total_frame_time_sample] = total_delta;
+        total_frame_time_sample = (total_frame_time_sample + 1) % ARRLEN(total_frame_time_samples);
+
         if (frame.simulation_tick % NET_PER_SIM_TICKS == 0)
             ++frame.network_tick;
         ++frame.simulation_tick;

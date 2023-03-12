@@ -146,6 +146,10 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
     u64 total_delta = 0;
 
+    u64 total_frame_time_samples[16] = {0};
+    size_t total_frame_time_sample = 0;
+    u64 avg_total_frame_time = 0;
+
     while (running) {
         // Begin frame
         const u64 total_frame_start = time_current();
@@ -427,6 +431,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 struct client_batch_header *batch = (void *) output_buffer.base;
                 batch->net_tick = frame.network_tick;
                 batch->adjustment_iteration = adjustment_iteration;
+                batch->avg_total_frame_time = avg_total_frame_time;
                 ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
                 enet_peer_send(peer, 0, packet);
                 output_buffer.top = output_buffer.base;
@@ -450,6 +455,12 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
             //DrawText("client", 10, 10, 20, BLACK);
             if (frame.simulation_tick % FPS == 0) {
+                f64 geomean = 1.0f;
+                for (size_t i = 0; i < ARRLEN(total_frame_time_samples); ++i) {
+                    geomean *= (f64) total_frame_time_samples[i];
+                }
+                geomean = pow(geomean, 1.0f/((f64) ARRLEN(total_frame_time_samples)));
+                avg_total_frame_time = (u64) geomean;
                 fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
             }
             if (!isinf(fps)) {
@@ -480,6 +491,9 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             }
             const u64 total_frame_end = time_current();
             total_delta = total_frame_end - total_frame_start;
+
+            total_frame_time_samples[total_frame_time_sample] = total_delta;
+            total_frame_time_sample = (total_frame_time_sample + 1) % ARRLEN(total_frame_time_samples);
         }
 
         if (run_network_tick)

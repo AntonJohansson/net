@@ -35,6 +35,7 @@ struct __attribute__((packed)) client_batch_header {
     u64 net_tick;
     u16 num_packets;
     u8 adjustment_iteration;
+    u64 avg_total_frame_time;
 };
 
 struct __attribute__((packed)) client_header {
