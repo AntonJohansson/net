@@ -74,6 +74,8 @@ static u64 win32_frequency = 0;
 
 static inline void time_init() {
 #if defined(_WIN32)
+    //// Setup high-resolution timer to 1ms (granularity of 1-2 ms)
+    //timeBeginPeriod(1);                 
     QueryPerformanceFrequency((LARGE_INTEGER*) &win32_frequency);
 #endif
     // Taken from raylib
@@ -81,6 +83,10 @@ static inline void time_init() {
 //    // Setup high-resolution timer to 1ms (granularity of 1-2 ms)
 //    timeBeginPeriod(1);                 
 //#endif
+}
+
+static inline void time_deinit() {
+    //timeEndPeriod(1);                 
 }
 
 static inline u64 time_current() {
@@ -96,20 +102,14 @@ static inline u64 time_current() {
 }
 
 static inline void time_nanosleep(u64 t) {
-    //struct timespec ts = {
-    //    .tv_nsec = t,
-    //};
-    //while(nanosleep(&ts, NULL) == -1) {}
-
+#if defined(__linux__)
+    struct timespec ts = {
+        .tv_nsec = t,
+    };
+    while(nanosleep(&ts, &ts) == -1) {}
     //u64 start = time_current();
     //while (time_current() - start < t) {}
-
-#if defined(__linux__)
-    u64 start = time_current();
-    while (time_current() - start < t) {}
 #else
-    //Sleep((50*t/100) / 1000000);
-
     u64 start = time_current();
     while (time_current() - start < t) {}
 #endif
