@@ -364,15 +364,15 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
         // active_tick is the tick we're applying peer data from,
         // this is always less than the current simulation tick.
-        u64 active_tick = frame.simulation_tick + 2*total_adjustment;
+        //u64 active_tick = frame.simulation_tick + 2*total_adjustment;
         HashMapForEach(peer_map, struct client_peer, peer) {
             if (!HashMapExists(peer_map, peer) || peer->id == main_player_id || peer->auth_buffer.used == 0)
                 continue;
 
             struct server_packet_peer_auth *entry = &peer->auth_buffer.data[peer->auth_buffer.bottom];
             //printf("we should get here: %u %u\n", active_tick, entry->sim_tick);
-            if (active_tick < entry->sim_tick)
-                continue;
+            //if (active_tick < entry->sim_tick)
+            //    continue;
 
             struct player *player = NULL;
             HashMapLookup(game.player_map, peer->id, player);
