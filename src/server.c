@@ -237,7 +237,7 @@ int main() {
                         // TODO(anjo): what do?
                         break;
                     }
-                    if (diff < -(VALID_TICK_WINDOW-1) || diff > 0) {
+                    if (diff < -(VALID_TICK_WINDOW) || diff > 0) {
                         // Need adjustment
                         adjustment = (i8) diff;
                     }
