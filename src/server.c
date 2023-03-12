@@ -252,7 +252,7 @@ int main() {
                     if (tick >= frame.simulation_tick) {
                         if (diff < -(VALID_TICK_WINDOW-1)) {
                             printf("Allowing packet, too late: net_tick %lu, should be >= %lu\n", batch->net_tick, frame.network_tick);
-                            printf("adjustment: %d\n", adjustment);
+                            printf("adjustment (%u): %d\n", batch->adjustment_iteration, adjustment);
                         }
                     } else {
                         struct server_header response_header = {
