@@ -136,7 +136,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
     i32 total_adjustment = 0;
 
     struct frame frame = {
-        .desired_delta = 20000 + NANOSECONDS(1) / (f32) FPS,
+        .desired_delta = 30000 + NANOSECONDS(1) / (f32) FPS,
         .dt = 1.0f / (f32) FPS,
     };
 
@@ -149,6 +149,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
     u64 total_frame_time_samples[16] = {0};
     size_t total_frame_time_sample = 0;
     u64 avg_total_frame_time = 0;
+
+    u64 avg_drift = 0;
 
     while (running) {
         // Begin frame
@@ -186,6 +188,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
+                        avg_drift = batch->avg_drift;
+                        frame.desired_delta += avg_drift;
                         ++adjustment_iteration;
 
                         if (adjustment < 0) {

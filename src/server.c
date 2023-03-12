@@ -57,6 +57,8 @@ struct server_peer {
     struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
     bool has_specified_adjustment_this_frame;
+
+    u64 avg_drift;
 };
 
 static inline void new_packet(struct server_peer *p) {
@@ -129,8 +131,7 @@ int main() {
 
     u64 total_frame_time_samples[16] = {0};
     size_t total_frame_time_sample = 0;
-
-    u64 client_avg_total_frame_time = 0;
+    u64 avg_total_frame_time = 0;
 
     while (running) {
         const u64 total_frame_start = time_current();
@@ -229,12 +230,12 @@ int main() {
                     struct client_batch_header *batch;
                     POP(&input_buffer, &batch);
 
-                    client_avg_total_frame_time = batch->avg_total_frame_time;
-
                     const PlayerId id = *(PlayerId *)event.peer->data;
 
                     struct server_peer *peer = NULL;
                     HashMapLookup(peer_map, id, peer);
+
+                    peer->avg_drift = avg_total_frame_time - batch->avg_total_frame_time;
 
                     assert(batch->num_packets > 0);
                     i64 tick = (i64) ((struct client_header *) input_buffer.top)->sim_tick;
@@ -255,6 +256,7 @@ int main() {
                         struct server_batch_header *server_batch = (void *) peer->output_buffer.base;
                         server_batch->adjustment = adjustment;
                         server_batch->adjustment_iteration = batch->adjustment_iteration;
+                        server_batch->avg_drift = peer->avg_drift;
                         peer->has_specified_adjustment_this_frame = true;
                     }
 
@@ -574,12 +576,9 @@ int main() {
                 geomean *= (f64) total_frame_time_samples[i];
             }
             geomean = pow(geomean, 1.0f/((f64) ARRLEN(total_frame_time_samples)));
-            u64 avg_total_frame_time = (u64) geomean;
+            avg_total_frame_time = (u64) geomean;
             if (!isinf(fps))
-                printf("fps: %.0f (%.0f) (%llu) (%llu) (%lld)\n", fps, 1000000000.0f/((f32)total_delta),
-                       avg_total_frame_time,
-                       client_avg_total_frame_time,
-                       avg_total_frame_time - client_avg_total_frame_time);
+                printf("fps: %.0f (%.0f) (%llu)\n", fps, 1000000000.0f/((f32)total_delta), avg_total_frame_time);
         }
 #endif
 
