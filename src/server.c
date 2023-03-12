@@ -244,7 +244,7 @@ int main() {
                         adjustment = (i8) diff;
                     }
 
-                    {
+                    if (!peer->has_specified_adjustment_this_frame) {
                         struct server_batch_header *server_batch = (void *) peer->output_buffer.base;
                         server_batch->adjustment = adjustment;
                         server_batch->adjustment_iteration = batch->adjustment_iteration;
