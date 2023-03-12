@@ -561,7 +561,7 @@ int main() {
         EndDrawing();
 #else
         if (frame.simulation_tick % FPS == 0) {
-            fps = 1.0f / ((f32)frame.delta/(f32)NANOSECONDS(1));
+            fps = (f32)NANOSECONDS(1) / ((f32)frame.delta);
             if (!isinf(fps))
                 printf("fps: %.0f (%.0f)\n", fps, 1000000000.0f/((f32)total_delta));
         }
