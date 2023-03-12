@@ -150,7 +150,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
     size_t total_frame_time_sample = 0;
     u64 avg_total_frame_time = 0;
 
-    u64 avg_drift = 0;
+    i64 avg_drift = 0;
 
     while (running) {
         // Begin frame
@@ -189,7 +189,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
                         avg_drift = batch->avg_drift;
-                        frame.desired_delta += avg_drift;
+                        printf("avg_drift: %lld", avg_drift);
+                        frame.desired_delta -= avg_drift;
                         ++adjustment_iteration;
 
                         if (adjustment < 0) {

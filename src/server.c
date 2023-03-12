@@ -58,7 +58,7 @@ struct server_peer {
     ENetPeer *enet_peer;
     bool has_specified_adjustment_this_frame;
 
-    u64 avg_drift;
+    i64 avg_drift;
 };
 
 static inline void new_packet(struct server_peer *p) {

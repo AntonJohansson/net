@@ -25,7 +25,7 @@ struct __attribute__((packed)) server_batch_header {
     u16 num_packets;
     i8 adjustment;
     u8 adjustment_iteration;
-    u64 avg_drift;
+    i64 avg_drift;
 };
 
 struct __attribute__((packed)) server_header {
