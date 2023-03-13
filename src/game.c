@@ -19,7 +19,7 @@ static inline void fire_nade_projectile(struct game *game, struct player *shoote
         .impact = res.impact,
         .impact_distance = res.distance,
         .impact_normal = res.normal,
-        .time_left = 2.0f,
+        .time_left = nade_explode_time,
     };
 
     ListInsert(game->nade_list, nade);
@@ -101,6 +101,7 @@ void update_player(struct game *game, struct player *p, struct input *input, con
     // Shoot state
     if (input->active[INPUT_SWITCH_WEAPON]) {
         p->current_weapon = (p->current_weapon + 1) % ARRLEN(p->weapons);
+        ListInsert(game->sound_list, ((struct spatial_sound){SOUND_WEAPON_SWITCH, p->pos}));
     }
 
     if (p->weapons[p->current_weapon] == PLAYER_WEAPON_SNIPER && input->active[INPUT_ZOOM]) {
@@ -265,10 +266,13 @@ void update_projectiles(struct game *game, const f32 dt) {
             nade->impact = res.impact;
             nade->impact_distance = res.distance;
 
-            ListInsert(game->sound_list, ((struct spatial_sound){SOUND_NADE_EXPLOSION, nade->pos}));
+            ListInsert(game->sound_list, ((struct spatial_sound){SOUND_NADE_DOINK, nade->pos}));
         }
 
         nade->time_left -= dt;
+        if ((u32)(nade->time_left / dt) % 64 == 0)
+            ListInsert(game->sound_list, ((struct spatial_sound){SOUND_NADE_BEEP, nade->pos}));
+
         if (nade->time_left < 0.0f) {
             nade->time_left = 0.0f;
 
@@ -278,7 +282,7 @@ void update_projectiles(struct game *game, const f32 dt) {
             struct explosion e = {
                 .player_id_from = nade->player_id_from,
                 .pos = nade->pos,
-                .radius = 1.0f,
+                .radius = 2.0f,
                 .time_left = 1.0f,
             };
             ListInsert(game->explosion_list, e);
@@ -296,11 +300,18 @@ void update_projectiles(struct game *game, const f32 dt) {
                                                                        });
 
                 if (result.colliding) {
-                    struct damage_entry damage = {
-                        .damage = 100.0f,
-                        .player_id = p->id,
-                    };
-                    ListInsert(game->damage_list, damage);
+                    v2 diff = v2sub(p->pos, e.pos);
+                    const f32 dist_to_player = v2len(diff);
+                    v2 dir = v2div(diff, dist_to_player);
+                    struct raycast_result res = raycast_map(game, e.pos, dir);
+
+                    if (res.distance >= dist_to_player) {
+                        struct damage_entry damage = {
+                            .damage = 100.0f,
+                            .player_id = p->id,
+                        };
+                        ListInsert(game->damage_list, damage);
+                    }
                 }
             }
 

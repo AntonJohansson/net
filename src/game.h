@@ -24,6 +24,8 @@ static const f32 weapon_cooldown = 1.0f;
 
 static const f32 sniper_trail_time = 1.0f;
 
+static const f32 nade_explode_time = 2.0f;
+
 //
 // Input
 //
@@ -124,17 +126,17 @@ struct map {
 static struct map map = {
     .data = (const u8 *) "################"
                          "#              #"
-                         "#          ##  #"
-                         "#  ###         #"
-                         "#  #           #"
-                         "#  #    ##     #"
-                         "#      ##      #"
                          "#              #"
-                         "#    #      #  #"
-                         "#    #  #####  #"
-                         "#       #      #"
-                         "#  ##          #"
-                         "#   #  ##      #"
+                         "#  ###    ###  #"
+                         "#  #        #  #"
+                         "#  #        #  #"
+                         "#      ##      #"
+                         "#  #        #  #"
+                         "#  #        #  #"
+                         "#      ##      #"
+                         "#  #        #  #"
+                         "#  #        #  #"
+                         "#  ###    ###  #"
                          "#              #"
                          "#              #"
                          "################",

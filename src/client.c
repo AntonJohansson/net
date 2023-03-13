@@ -474,7 +474,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
             camera.offset = (v2) {GetRenderWidth()/2, GetRenderHeight()/2};
             camera.target = player->pos;
-            draw_game(camera, &game, main_player_id, t);
+            draw_game(camera, &game, main_player_id, frame.dt, t);
 
             DrawText("client", 10, 10, 20, BLACK);
             if (frame.simulation_tick % FPS == 0) {

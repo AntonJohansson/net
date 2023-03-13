@@ -5,9 +5,12 @@
 static Sound sound_map[SOUND_COUNT] = {0};
 
 static f32 sound_base_volume[SOUND_COUNT] = {
-    [SOUND_SNIPER_FIRE]         = 1.0f,
+    [SOUND_SNIPER_FIRE]         = 0.9f,
     [SOUND_NADE_EXPLOSION]      = 1.0f,
-    [SOUND_STEP]                = 1.0f,
+    [SOUND_STEP]                = 0.5f,
+    [SOUND_WEAPON_SWITCH]       = 0.25f,
+    [SOUND_NADE_BEEP]           = 0.25f,
+    [SOUND_NADE_DOINK]          = 0.9f,
 };
 
 void audio_init() {
@@ -16,6 +19,9 @@ void audio_init() {
     sound_map[SOUND_SNIPER_FIRE] = LoadSound("res/sniper.ogg");
     sound_map[SOUND_NADE_EXPLOSION] = LoadSound("res/explosion.ogg");
     sound_map[SOUND_STEP] = LoadSound("res/step.ogg");
+    sound_map[SOUND_WEAPON_SWITCH] = LoadSound("res/switch.ogg");
+    sound_map[SOUND_NADE_BEEP] = LoadSound("res/pip.ogg");
+    sound_map[SOUND_NADE_DOINK] = LoadSound("res/doink.ogg");
 }
 
 void audio_deinit() {

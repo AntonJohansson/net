@@ -11,7 +11,7 @@ Shader light;
 Shader final;
 
 int light_resolution = 512;
-int shadow_resolution = 256;
+int shadow_resolution = 1024;
 
 int light_pos_loc;
 int resolution_loc;
@@ -211,9 +211,9 @@ void draw_map(struct camera c, const struct map *map) {
 
             switch (tile) {
             case '#': {
-                const f32 lightness = 0.20f + 0.05f*random_next_bilateral(&series);
+                const f32 lightness = 0.18f + 0.04f*random_next_bilateral(&series);
 
-                const Color light = hsl_to_rgb(HSL(0.0f, 0.0f, lightness));
+                const Color light = hsl_to_rgb(HSL(0.0f, 0.0f,      lightness));
                 const Color dark  = hsl_to_rgb(HSL(0.0f, 0.0f, 0.7f*lightness));
 
                 const f32 thickness = 0.1f * random_next_unilateral(&series);
@@ -323,7 +323,8 @@ struct light {
     RenderTexture shadowmap;
     enum light_mode mode;
     v2 pos;
-    // These last two entries are only used by cone lights
+    Color color;
+    // These last entries are only used by cone lights
     f32 cone_angle;
     f32 cone_width;
     f32 cone_length;
@@ -333,7 +334,7 @@ struct light {
 static struct light lights[MAX_LIGHTS] = {0};
 static u32 num_lights = 0;
 
-void draw_dynamic_light(struct game *game, enum light_mode mode, v2 pos, f32 cone_angle, f32 cone_width, f32 cone_length) {
+void draw_dynamic_light(struct game *game, enum light_mode mode, v2 pos, f32 cone_angle, f32 cone_width, f32 cone_length, Color color) {
     assert(num_lights < MAX_LIGHTS);
 
     struct light *l = &lights[num_lights++];
@@ -347,6 +348,7 @@ void draw_dynamic_light(struct game *game, enum light_mode mode, v2 pos, f32 con
 
     l->mode = mode;
     l->pos = pos;
+    l->color = color;
     l->cone_angle = cone_angle;
     l->cone_width= cone_width;
     l->cone_length = cone_length;
@@ -370,7 +372,7 @@ void draw_dynamic_light(struct game *game, enum light_mode mode, v2 pos, f32 con
     EndShaderMode();
 }
 
-void draw_game(struct camera c, struct game *game, PlayerId main_player_id, const f32 t) {
+void draw_game(struct camera c, struct game *game, PlayerId main_player_id, const f32 dt, const f32 t) {
     if (IsWindowResized()) {
         set_light_resolution();
 
@@ -401,7 +403,19 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
 
         f32 length = 0.5f + main_player->sniper_zoom/2.0f;
 
-        draw_dynamic_light(game, LIGHT_MODE_CONE, main_player->pos, cone_angle, zoom, length);
+        draw_dynamic_light(game, LIGHT_MODE_CONE, main_player->pos, cone_angle, zoom, length, (Color){200,200,200,200});
+    }
+
+    // Draw nade blinky lights
+    ForEachList(game->nade_list, struct nade_projectile, nade) {
+        struct player *p;
+        HashMapLookup(game->player_map, nade->player_id_from, p);
+
+        const Color light = hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f));
+
+        f32 s = sinf((M_PI/2.0f) * (f32)(nade->time_left/ dt)/64);
+        f32 radius = 0.25f * s*s*s*s;
+        draw_dynamic_light(game, LIGHT_MODE_POINT, nade->pos, 0, 0, radius, light);
     }
     //for (u8 i = 0; i < MAX_CLIENTS; ++i) {
     //    struct player *player = &game->players[i];
@@ -437,11 +451,10 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
                        (Rectangle){0,0,light_resolution,light_resolution},
                        (Vector2){light_screen_pos.x - light_resolution/2,
                                  light_screen_pos.y - light_resolution/2},
-                       (Color){200,200,200,200});
+                       l->color);
 
         EndBlendMode();
         EndShaderMode();
-        break; //@HACK
     }
     EndTextureMode();
 

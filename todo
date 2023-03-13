@@ -1,11 +1,8 @@
 What do I need to make this game playable?
-    - nade beeping
-    - F for fullscreen
     - move at the end of slide
     - Fix nades
-    - more audio
     - sync audio
-    - sync steps
+    - raycast on nade explode
 
 Game idea:
     - multiplayer + cooperative
