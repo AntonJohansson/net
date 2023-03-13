@@ -2,23 +2,6 @@
 #include <math.h>
 #include <float.h>
 
-// Game related constants
-static const f32 nade_deceleration = 0.04f;
-
-static const f32 move_acceleration = 50.0f;
-static const f32 max_move_speed = 5.0f;
-static const f32 step_delay = 1.0f;
-
-static const f32 dodge_acceleration = 100.0f;
-static const f32 dodge_deceleration = 10.f;
-static const f32 max_dodge_speed = 10.0f;
-static const f32 dodge_time = 0.20f;
-static const f32 dodge_delay_time = 1.0f;
-
-static const f32 weapon_cooldown = 1.0f;
-
-static const f32 sniper_trail_time = 1.0f;
-
 //
 // Projectiles/Hitscan
 //
@@ -35,6 +18,7 @@ static inline void fire_nade_projectile(struct game *game, struct player *shoote
         .vel = 4.0f*shooter->nade_distance,
         .impact = res.impact,
         .impact_distance = res.distance,
+        .impact_normal = res.normal,
         .time_left = 2.0f,
     };
 
@@ -70,7 +54,6 @@ static inline void fire_hitscan_projectile(struct game *game, struct player *sho
     } else if (map_res.hit && (!player_res.hit || player_res.distance > map_res.distance)) {
         // Hit wall
     }
-
 }
 
 //
@@ -128,6 +111,10 @@ void update_player(struct game *game, struct player *p, struct input *input, con
         p->sniper_zoom -= 0.01f;
         if (p->sniper_zoom <= 0.0f)
             p->sniper_zoom = 0.0f;
+    }
+
+    if (p->weapons[p->current_weapon] != PLAYER_WEAPON_NADE && p->nade_distance > 0.0f) {
+        p->nade_distance = 0.0f;
     }
 
     bool can_fire = p->time_left_in_weapon_cooldown[p->current_weapon] <= 0.0f;
@@ -207,12 +194,12 @@ void update_player(struct game *game, struct player *p, struct input *input, con
                 p->step_delay = new_step_delay;
             if (p->step_delay < 0.0f) {
                 p->step_delay = new_step_delay;
-                //printf("%f\n", p->step_delay);
 
                 f32 step_offset = 0.25f * ((p->step_left_side) ? 1.0f : -1.0f);
                 v2 orthogonal_dir = {-p->look.y, p->look.x};
                 v2 pos = v2add(p->pos, v2scale(step_offset, orthogonal_dir));
                 ListInsert(game->sound_list, ((struct spatial_sound){SOUND_STEP, pos}));
+                ListInsert(game->step_list, ((struct step){pos, 5.0f}));
                 p->step_left_side = !p->step_left_side;
             }
         } else {
@@ -269,43 +256,16 @@ void update_projectiles(struct game *game, const f32 dt) {
 
         f32 dist = v2len2(v2sub(nade->pos, nade->start_pos));
         if (dist > nade->impact_distance*nade->impact_distance) {
+            // We've hit a wall, reflect the nade
+            nade->dir = v2reflect(nade->dir, nade->impact_normal);
+            nade->start_pos = v2add(nade->impact, v2scale(0.1f, nade->impact_normal));
+
+            struct raycast_result res = raycast_map(game, nade->start_pos, nade->dir);
+            nade->pos = nade->start_pos;
+            nade->impact = res.impact;
+            nade->impact_distance = res.distance;
+
             ListInsert(game->sound_list, ((struct spatial_sound){SOUND_NADE_EXPLOSION, nade->pos}));
-
-            // Explode on hit
-            struct explosion e = {
-                .pos = nade->pos,
-                .radius = 1.0f,
-                .time_left = 1.0f,
-            };
-            ListInsert(game->explosion_list, e);
-
-            HashMapForEach(game->player_map, struct player, p) {
-                if (!HashMapExists(game->player_map, p))
-                    continue;
-                struct collision_result result = collide_circle_circle((struct circle) {
-                                                                            .pos = p->pos,
-                                                                            .radius = 0.25f,
-                                                                       },
-                                                                       (struct circle) {
-                                                                            .pos = e.pos,
-                                                                            .radius = e.radius,
-                                                                       });
-
-                if (result.colliding) {
-                    if (p->state == PLAYER_STATE_SLIDING) {
-                        v2 dir = v2normalize(v2sub(p->pos, e.pos));
-                        p->velocity = v2add(p->velocity, v2scale(10.0f, dir));
-                    } else {
-                        struct damage_entry damage = {
-                            .damage = 100.0f,
-                            .player_id = p->id,
-                        };
-                        ListInsert(game->damage_list, damage);
-                    }
-                }
-            }
-
-            ListTagRemovePtr(game->nade_list, nade);
         }
 
         nade->time_left -= dt;
@@ -316,6 +276,7 @@ void update_projectiles(struct game *game, const f32 dt) {
 
             // Explode on time out
             struct explosion e = {
+                .player_id_from = nade->player_id_from,
                 .pos = nade->pos,
                 .radius = 1.0f,
                 .time_left = 1.0f,
@@ -356,6 +317,17 @@ void update_projectiles(struct game *game, const f32 dt) {
         }
     }
     ListRemoveTaggedItems(game->explosion_list);
+
+    // I guess this is not a "projectile", but neither is an
+    // explosion
+    ForEachList(game->step_list, struct step, s) {
+        s->time_left -= dt;
+        if (s->time_left < 0.0f) {
+            s->time_left = 0.0f;
+            ListTagRemovePtr(game->step_list, s);
+        }
+    }
+    ListRemoveTaggedItems(game->step_list);
 }
 
 //
@@ -475,31 +447,39 @@ struct raycast_result collide_ray_aabb(v2 pos, v2 dir, struct aabb aabb) {
 
     // We can simplify this
     // @OPTIMIZE
+    v2 vx = {hit_line_x, y};
+    v2 vy = (v2) {x, hit_line_y};
 
-    v2 a = {hit_line_x, y};
-    v2 b = (v2) {x, hit_line_y};
+    const f32 normal_sign_x = (v2dot((v2){0,1}, dir) > 0.0f) ? -1.0f : 1.0f;
+    const f32 normal_sign_y = (v2dot((v2){1,0}, dir) > 0.0f) ? -1.0f : 1.0f;
 
     // Checking dot product between directions here is very inefficient
     // @OPTIMIZE
     if (hit_x && hit_y) {
-        v2 c = (v2len2(v2sub(a,pos)) < v2len2(v2sub(b,pos))) ? a : b;
+        bool x_is_closer = v2len2(v2sub(vx,pos)) < v2len2(v2sub(vy,pos));
+        v2 c = (x_is_closer) ? vx : vy;
         if (!f32_equal(v2dot(v2normalize(v2sub(c,pos)), dir), 1.0f))
             return res;
         res.hit = true;
         res.impact = c;
+        res.normal = (x_is_closer) ? v2scale(normal_sign_x, (v2){0,1}) :
+                                     v2scale(normal_sign_y, (v2){1,0});
+
         res.distance = v2len(v2sub(c,pos));
     } else if (hit_x) {
-        if (!f32_equal(v2dot(v2normalize(v2sub(a,pos)), dir), 1.0f))
+        if (!f32_equal(v2dot(v2normalize(v2sub(vx,pos)), dir), 1.0f))
             return res;
         res.hit = true;
-        res.impact = a;
-        res.distance = v2len(v2sub(a,pos));
+        res.impact = vx;
+        res.normal = v2scale(normal_sign_x, (v2){0,1});
+        res.distance = v2len(v2sub(vx,pos));
     } else if (hit_y) {
-        if (!f32_equal(v2dot(v2normalize(v2sub(b,pos)), dir), 1.0f))
+        if (!f32_equal(v2dot(v2normalize(v2sub(vy,pos)), dir), 1.0f))
             return res;
         res.hit = true;
-        res.impact = b;
-        res.distance = v2len(v2sub(b,pos));
+        res.impact = vy;
+        res.normal = v2scale(normal_sign_y, (v2){1,0});
+        res.distance = v2len(v2sub(vy,pos));
     }
 
     return res;

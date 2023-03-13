@@ -7,6 +7,23 @@
 #include <string.h>
 #include <assert.h>
 
+// Game related constants
+static const f32 nade_deceleration = 10.0f;
+
+static const f32 move_acceleration = 50.0f;
+static const f32 max_move_speed = 5.0f;
+static const f32 step_delay = 1.0f;
+
+static const f32 dodge_acceleration = 100.0f;
+static const f32 dodge_deceleration = 10.f;
+static const f32 max_dodge_speed = 10.0f;
+static const f32 dodge_time = 0.20f;
+static const f32 dodge_delay_time = 1.0f;
+
+static const f32 weapon_cooldown = 1.0f;
+
+static const f32 sniper_trail_time = 1.0f;
+
 //
 // Input
 //
@@ -157,10 +174,12 @@ Pack(struct nade_projectile {
     f32 vel;
     v2 impact;
     f32 impact_distance;
+    v2 impact_normal;
     f32 time_left;
 });
 
 struct explosion {
+    PlayerId player_id_from;
     v2 pos;
     f32 radius;
     f32 time_left;
@@ -261,10 +280,16 @@ static inline PlayerId player_id() {
 #define MAX_PROJECTILES 64
 #define MAX_HITSCAN_PROJECTILES 64
 #define MAX_SOUNDS_PER_FRAME 64
+#define MAX_STEPS 128
 
 struct spatial_sound {
     enum sound sound;
     v2 pos;
+};
+
+struct step {
+    v2 pos;
+    f32 time_left;
 };
 
 struct game {
@@ -277,6 +302,10 @@ struct game {
     List(struct damage_entry,       MAX_CLIENTS)             damage_list;
     List(struct explosion,          MAX_HITSCAN_PROJECTILES) explosion_list;
     List(struct spatial_sound,      MAX_SOUNDS_PER_FRAME)    sound_list;
+
+    // Would have been nicer to just use a render texture, but
+    // wasn't able to get raylib to keep them alive across frames:(
+    List(struct step, MAX_STEPS) step_list;
 
     // These are only used so that the server can easily batch new projectiles
     // and send to clients
@@ -316,6 +345,7 @@ struct circle {
 struct raycast_result {
     bool hit;
     v2 impact;
+    v2 normal;
     f32 distance;
 };
 

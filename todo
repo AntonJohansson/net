@@ -1,8 +1,11 @@
 What do I need to make this game playable?
-    - step sounds
-    - render weapons
-    - tune movements
     - nade beeping
+    - F for fullscreen
+    - move at the end of slide
+    - Fix nades
+    - more audio
+    - sync audio
+    - sync steps
 
 Game idea:
     - multiplayer + cooperative

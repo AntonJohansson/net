@@ -236,7 +236,6 @@ void draw_map(struct camera c, const struct map *map) {
 }
 
 void draw_player(struct camera c, struct player *p) {
-    const f32 line_len = 0.35f;
     const f32 radius = 0.25f;
     const f32 dodge_radius = 0.7f * radius;
 
@@ -252,19 +251,57 @@ void draw_player(struct camera c, struct player *p) {
 
     Vector2 pos = world_to_screen(c, p->pos);
 
-    DrawLineEx(pos,
-               world_to_screen(c, v2add(p->pos, v2scale(p->nade_distance, p->look))),
-               world_to_screen_length(c, 0.1f),
-               BLUE);
-
     if (p->state == PLAYER_STATE_SLIDING) {
         DrawCircle(pos.x, pos.y, world_to_screen_length(c, dodge_radius), dark);
         DrawCircle(pos.x, pos.y, world_to_screen_length(c, 0.7f*dodge_radius), light);
     } else {
-        DrawLineEx(pos,
-                   world_to_screen(c, v2add(p->pos, v2scale(line_len, p->look))),
-                   world_to_screen_length(c, 0.25f),
-                   DARKGRAY);
+        v2 ortho_dir = {-p->look.y, p->look.x};
+
+        for (u32 i = 0; i < 2; ++i) {
+
+            const f32 cooldown = p->time_left_in_weapon_cooldown[i];
+
+            switch (p->weapons[i]) {
+
+            case PLAYER_WEAPON_SNIPER: {
+                if (i == p->current_weapon) {
+                    v2 sniper_end = v2add(p->pos, v2scale(0.8f, p->look));
+                    DrawLineEx(world_to_screen(c, p->pos),
+                               world_to_screen(c, sniper_end),
+                               world_to_screen_length(c, 0.1f),
+                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_cooldown-cooldown))));
+                } else {
+                    v2 sniper_start = v2add(v2add(p->pos, v2scale(0.40f, ortho_dir)), v2scale(-0.25f, p->look));
+                    v2 sniper_end = v2add(sniper_start, v2scale(-0.8f, ortho_dir));
+                    DrawLineEx(world_to_screen(c, sniper_start),
+                               world_to_screen(c, sniper_end),
+                               world_to_screen_length(c, 0.1f),
+                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_cooldown-cooldown))));
+                }
+            } break;
+
+            case PLAYER_WEAPON_NADE: {
+                if (i == p->current_weapon) {
+                    v2 nade_dist_end = v2add(p->pos, v2scale(p->nade_distance, p->look));
+                    DrawLineEx(world_to_screen(c, p->pos),
+                               world_to_screen(c, nade_dist_end),
+                               world_to_screen_length(c, 0.1f),
+                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_cooldown-cooldown))));
+
+                    const f32 nade_radius = 0.125f * (weapon_cooldown - cooldown);
+                    Vector2 nade_pos = world_to_screen(c, v2add(p->pos, v2scale(0.25f+0.125f, p->look)));
+                    DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, nade_radius), light);
+                    DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, 0.7f*nade_radius), dark);
+                } else {
+                    const f32 nade_radius = 0.125f * (weapon_cooldown - cooldown);
+                    Vector2 nade_pos = world_to_screen(c, v2add(p->pos, v2scale(-0.25f-0.125f, p->look)));
+                    DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, nade_radius), light);
+                    DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, 0.7f*nade_radius), dark);
+                }
+            } break;
+            }
+        }
+
         DrawCircle(pos.x, pos.y, world_to_screen_length(c, radius), dark);
         DrawCircle(pos.x, pos.y, world_to_screen_length(c, 0.7f*radius), light);
     }
@@ -409,6 +446,14 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
     EndTextureMode();
 
     draw_map(c, &game->map);
+
+    ForEachList(game->step_list, struct step, s) {
+        const Color dark   = Fade(hsl_to_rgb(HSL(60.0f, 0.5f, 0.2f)), s->time_left/2.0f);
+        const Color darker = Fade(hsl_to_rgb(HSL(60.0f, 0.5f, 0.1f)), s->time_left/2.0f);
+        DrawCircleV(world_to_screen(c, s->pos), world_to_screen_length(c, 0.2f), darker);
+        DrawCircleV(world_to_screen(c, s->pos), world_to_screen_length(c, 0.7f*0.2f), dark);
+    }
+
     DrawRectangle(0,0,resolution.x,resolution.y,(Color){10,10,10,150});
     BeginBlendMode(BLEND_ADDITIVE);
     DrawTextureRec(lightmap.texture, (Rectangle){0,0,lightmap.texture.width,-lightmap.texture.height}, (Vector2){0,0}, WHITE);
@@ -429,23 +474,40 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
     EndShaderMode();
 
     ForEachList(game->nade_list, struct nade_projectile, nade) {
-        Vector2 p = world_to_screen(c, nade->pos);
-        DrawCircle(p.x, p.y, 5.0f, RED);
+        struct player *p;
+        HashMapLookup(game->player_map, nade->player_id_from, p);
+
+        const Color light = hsl_to_rgb(HSL(p->hue, 0.5f, 0.5f));
+        const Color dark  = hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f));
+
+        Vector2 nade_pos = world_to_screen(c, nade->pos);
+        DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, 0.125f), light);
+        DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, 0.7f*0.125f), dark);
     }
 
     ForEachList(game->explosion_list, struct explosion, e) {
+        struct player *p;
+        HashMapLookup(game->player_map, e->player_id_from, p);
+
+        const Color dark = Fade(hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f)), e->time_left);
+
         f32 radius = world_to_screen_length(c, e->radius);
-        Vector2 p = world_to_screen(c, e->pos);
-        DrawCircle(p.x, p.y, radius, RED);
+        Vector2 explosion_pos = world_to_screen(c, e->pos);
+        DrawCircle(explosion_pos.x, explosion_pos.y, radius, dark);
     }
 
     ForEachList(game->hitscan_list, struct hitscan_projectile, hitscan) {
+        struct player *p;
+        HashMapLookup(game->player_map, hitscan->player_id_from, p);
+
+        const Color dark = Fade(hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f)), hitscan->time_left);
+
         Vector2 start = world_to_screen(c, hitscan->pos);
         Vector2 end = world_to_screen(c, hitscan->impact);
         f32 thickness = world_to_screen_length(c, 0.1f);
-        DrawLineEx(start, end, thickness, GRAY);
+        DrawLineEx(start, end, thickness, dark);
         f32 radius = world_to_screen_length(c, 0.1f);
-        DrawCircle(end.x, end.y, radius, GRAY);
+        DrawCircle(end.x, end.y, radius, dark);
     }
 
     if (main_player->health > 0.0f)

@@ -7,7 +7,7 @@ static Sound sound_map[SOUND_COUNT] = {0};
 static f32 sound_base_volume[SOUND_COUNT] = {
     [SOUND_SNIPER_FIRE]         = 1.0f,
     [SOUND_NADE_EXPLOSION]      = 1.0f,
-    [SOUND_STEP]                = 0.25f,
+    [SOUND_STEP]                = 1.0f,
 };
 
 void audio_init() {
