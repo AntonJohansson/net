@@ -24,8 +24,8 @@ int cone_width_loc;
 int cone_length_loc;
 
 static inline const Vector2 get_scale() {
-    const f32 width  = (f32) GetScreenWidth();
-    const f32 height = (f32) GetScreenHeight();
+    const f32 width  = (f32) GetRenderWidth();
+    const f32 height = (f32) GetRenderHeight();
     const f32 tile_size = 16.0f;
     const f32 scale_x = tile_size * ((width > height) ? (width/height) : 1.0f);
     const f32 scale_y = tile_size * ((width > height) ? 1.0f : (height/width));
@@ -33,8 +33,8 @@ static inline const Vector2 get_scale() {
 }
 
 static inline Vector2 world_to_screen(struct camera c, v2 v) {
-    const f32 width  = (f32) GetScreenWidth();
-    const f32 height = (f32) GetScreenHeight();
+    const f32 width  = (f32) GetRenderWidth();
+    const f32 height = (f32) GetRenderHeight();
     Vector2 scale = get_scale();
     return (Vector2) {
         .x = width  * ((v.x - c.target.x)/scale.x) + c.offset.x,
@@ -43,8 +43,8 @@ static inline Vector2 world_to_screen(struct camera c, v2 v) {
 }
 
 v2 screen_to_world(struct camera c, Vector2 v) {
-    const f32 width  = (f32) GetScreenWidth();
-    const f32 height = (f32) GetScreenHeight();
+    const f32 width  = (f32) GetRenderWidth();
+    const f32 height = (f32) GetRenderHeight();
 
     v2 res;
     Vector2 scale = get_scale();
@@ -55,8 +55,8 @@ v2 screen_to_world(struct camera c, Vector2 v) {
 }
 
 static inline f32 world_to_screen_length(struct camera c, f32 len) {
-    const f32 width  = (f32) GetScreenWidth();
-    const f32 height = (f32) GetScreenHeight();
+    const f32 width  = (f32) GetRenderWidth();
+    const f32 height = (f32) GetRenderHeight();
     Vector2 scale = get_scale();
     const Vector2 v = world_to_screen((struct camera){0}, (v2) {len, len});
     return fminf(v.x, v.y);
@@ -78,7 +78,7 @@ void draw_init() {
     light = LoadShader("res/light.vert", "res/light.frag");
     final = LoadShader("res/final.vert", "res/final.frag");
 
-    lightmap = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+    lightmap = LoadRenderTexture(GetRenderWidth(), GetRenderHeight());
 
     light_pos_loc                = GetShaderLocation(light, "light_pos");
     resolution_loc               = GetShaderLocation(light, "resolution");
@@ -375,7 +375,7 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
         set_light_resolution();
 
         UnloadRenderTexture(lightmap);
-        lightmap = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+        lightmap = LoadRenderTexture(GetRenderWidth(), GetRenderHeight());
 
         // Invalidate all lights
         for (u32 i = 0; i < num_lights; ++i) {
@@ -412,7 +412,7 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
     //    draw_dynamic_light(game, LIGHT_MODE_CONE, player->pos, cone_angle, M_PI/2.0f);
     //}
 
-    Vector2 resolution = {GetScreenWidth(), GetScreenHeight()};
+    Vector2 resolution = {GetRenderWidth(), GetRenderHeight()};
 
     BeginTextureMode(lightmap);
     ClearBackground(BLANK);

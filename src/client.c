@@ -96,6 +96,8 @@ void client_handle_input(struct player *p, struct input *input) {
         input->active[INPUT_SHOOT_RELEASED] = true;
     if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
         input->active[INPUT_ZOOM] = true;
+    if (IsKeyPressed(KEY_F))
+        input->active[INPUT_FULLSCREEN] = true;
     if (IsKeyPressed(KEY_Q))
         input->active[INPUT_SWITCH_WEAPON] = true;
     if (IsKeyDown(KEY_ESCAPE))
@@ -109,6 +111,8 @@ void client_handle_input(struct player *p, struct input *input) {
         input->look.y = 0;
     }
 }
+
+static Vector2 old_window_size = {0};
 
 static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buffer) {
     struct graph graph = graph_new(2*FPS);
@@ -400,6 +404,9 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             if (input->active[INPUT_MUTE])
                 mute = !mute;
 
+            if (input->active[INPUT_FULLSCREEN])
+                ToggleFullscreen();
+
             if (input->active[INPUT_QUIT])
                 running = false;
 
@@ -465,7 +472,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         if (connected) {
             assert(player != NULL);
 
-            camera.offset = (v2) {GetScreenWidth()/2, GetScreenHeight()/2};
+            camera.offset = (v2) {GetRenderWidth()/2, GetRenderHeight()/2};
             camera.target = player->pos;
             draw_game(camera, &game, main_player_id, t);
 
@@ -572,8 +579,8 @@ int main(int argc, char **argv) {
     while (!WindowShouldClose()) {
         switch (menu_state) {
         case START: {
-            const int w = GetScreenWidth();
-            const int h = GetScreenHeight();
+            const int w = GetRenderWidth();
+            const int h = GetRenderHeight();
 
             BeginDrawing();
             ClearBackground(BLACK);
@@ -622,8 +629,8 @@ int main(int argc, char **argv) {
         } break;
 
         case CONNECTING: {
-            const int w = GetScreenWidth();
-            const int h = GetScreenHeight();
+            const int w = GetRenderWidth();
+            const int h = GetRenderHeight();
 
             // Draw something so the user know something is going on
             // even tho the program will hang when connecting.

@@ -46,6 +46,8 @@ enum input_type {
     INPUT_SWITCH_WEAPON,
     INPUT_ZOOM,
 
+    INPUT_FULLSCREEN,
+
     INPUT_QUIT,
     INPUT_LAST,
 };
