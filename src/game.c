@@ -137,7 +137,13 @@ void update_player(struct game *game, struct player *p, struct input *input, con
         p->nade_distance = 0.0f;
     }
 
-    // Dodge movement
+    // Process player inputs
+    const f32 dx = 1.0f*(f32) input->active[INPUT_MOVE_RIGHT] - 1.0f*(f32) input->active[INPUT_MOVE_LEFT];
+    const f32 dy = 1.0f*(f32) input->active[INPUT_MOVE_DOWN]  - 1.0f*(f32) input->active[INPUT_MOVE_UP];
+    const v2 dv = {dx, dy};
+    const f32 len2 = v2len2(dv);
+
+    // Slide movement
     if (p->state == PLAYER_STATE_SLIDING) {
         if (p->time_left_in_dodge > 0.0f) {
             p->velocity = v2add(p->velocity, v2scale(dt*dodge_acceleration, p->dodge));
@@ -153,6 +159,17 @@ void update_player(struct game *game, struct player *p, struct input *input, con
         } else {
             const v2 slowdown_dir = v2neg(v2normalize(p->velocity));
             const f32 speed = v2len(p->velocity);
+
+            // Allow movement at the end of the dodge
+            if (len2 > 0.0f) {
+                const f32 len = sqrtf(len2);
+                p->velocity = v2add(p->velocity, v2scale(dt*move_acceleration/len, dv));
+            }
+            const f32 new_speed = v2len(p->velocity);
+            if (new_speed > speed) {
+                p->velocity = v2scale(speed, v2normalize(p->velocity));
+            }
+
             if (speed > 0.0f) {
                 const f32 slowdown = fminf(speed, dt*dodge_deceleration);
                 if (speed < dt*dodge_deceleration) {
@@ -164,12 +181,7 @@ void update_player(struct game *game, struct player *p, struct input *input, con
         }
     }
 
-    // Process player inputs
-    const f32 dx = 1.0f*(f32) input->active[INPUT_MOVE_RIGHT] - 1.0f*(f32) input->active[INPUT_MOVE_LEFT];
-    const f32 dy = 1.0f*(f32) input->active[INPUT_MOVE_DOWN]  - 1.0f*(f32) input->active[INPUT_MOVE_UP];
-    const v2 dv = {dx, dy};
-    const f32 len2 = v2len2(dv);
-
+    // Leave slide state
     if (p->state == PLAYER_STATE_SLIDING && p->time_left_in_dodge == 0.0f) {
         const f32 speed = v2len(p->velocity);
         if (speed <= active_max_move_speed && len2 > 0.0f) {

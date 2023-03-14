@@ -31,14 +31,6 @@ bool running = true;
 //             than that.
 //
 
-struct frame {
-    u64 desired_delta;
-    u64 delta;
-    u64 simulation_tick;
-    u64 network_tick;
-    f32 dt;
-};
-
 struct update_log_entry {
     u64 client_sim_tick;
     u64 server_net_tick;
@@ -57,8 +49,6 @@ struct server_peer {
     struct byte_buffer output_buffer;
     ENetPeer *enet_peer;
     bool has_specified_adjustment_this_frame;
-
-    i64 avg_drift;
 };
 
 static inline void new_packet(struct server_peer *p) {
@@ -129,13 +119,27 @@ int main() {
 
     u64 total_delta = 0;
 
-    u64 total_frame_time_samples[16] = {0};
-    size_t total_frame_time_sample = 0;
-    u64 avg_total_frame_time = 0;
+    struct frame_debug_data frame_debug = {0};
 
     while (running) {
         const u64 total_frame_start = time_current();
         const u64 frame_start = time_current();
+
+        // Collect frame debug data
+        if (frame.simulation_tick % FPS == 0) {
+            frame_debug.total_frame_start = time_current();
+            // Save incoming data before each frame so we can compute
+            // bandwidth, for somer reason peer->[incoming|outoing]Bandwidth
+            // is always zero.
+            frame_debug.incoming_data_total_start = 0;
+            frame_debug.outgoing_data_total_start = 0;
+            HashMapForEach(peer_map, struct server_peer, peer) {
+                if (!HashMapExists(peer_map, peer))
+                    continue;
+                frame_debug.incoming_data_total_start += peer->enet_peer->incomingDataTotal;
+                frame_debug.outgoing_data_total_start += peer->enet_peer->outgoingDataTotal;
+            }
+        }
 
         // Handle network
         if (frame.simulation_tick % NET_PER_SIM_TICKS == 0) {
@@ -235,8 +239,6 @@ int main() {
                     struct server_peer *peer = NULL;
                     HashMapLookup(peer_map, id, peer);
 
-                    peer->avg_drift = avg_total_frame_time - batch->avg_total_frame_time;
-
                     assert(batch->num_packets > 0);
                     i64 tick = (i64) ((struct client_header *) net_input_buffer.top)->sim_tick;
 
@@ -256,7 +258,6 @@ int main() {
                         struct server_batch_header *server_batch = (void *) peer->output_buffer.base;
                         server_batch->adjustment = adjustment;
                         server_batch->adjustment_iteration = batch->adjustment_iteration;
-                        server_batch->avg_drift = peer->avg_drift;
                         peer->has_specified_adjustment_this_frame = true;
                     }
 
@@ -606,7 +607,7 @@ int main() {
                     continue;
                 const size_t size = (intptr_t) peer->output_buffer.top - (intptr_t) peer->output_buffer.base;
                 if (size > sizeof(struct server_batch_header)) {
-                    ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
+                    ENetPacket *packet = enet_packet_create(peer->output_buffer.base, size, ENET_PACKET_FLAG_UNSEQUENCED);
                     enet_peer_send(peer->enet_peer, 0, packet);
                     peer->output_buffer.top = peer->output_buffer.base;
 
@@ -639,15 +640,8 @@ int main() {
         EndDrawing();
 #else
         if (frame.simulation_tick % FPS == 0) {
-            fps = (f32)NANOSECONDS(1) / ((f32)frame.delta);
-            f64 geomean = 1.0f;
-            for (size_t i = 0; i < ARRLEN(total_frame_time_samples); ++i) {
-                geomean *= (f64) total_frame_time_samples[i];
-            }
-            geomean = pow(geomean, 1.0f/((f64) ARRLEN(total_frame_time_samples)));
-            avg_total_frame_time = (u64) geomean;
             if (!isinf(fps))
-                printf("fps: %.0f (%.0f) (%llu)\n", fps, 1000000000.0f/((f32)total_delta), avg_total_frame_time);
+                printf("fps: %10.0f (%.0f) | in: %10u | out: %10u \n", frame_debug.fps, 1000000000.0f/((f32)frame_debug.total_delta), frame_debug.incoming_bandwidth, frame_debug.outgoing_bandwidth);
         }
 #endif
 
@@ -657,11 +651,24 @@ int main() {
         if (frame.delta < frame.desired_delta) {
             time_nanosleep(frame.desired_delta - frame.delta);
         }
-        const u64 total_frame_end = time_current();
-        total_delta = total_frame_end - total_frame_start;
 
-        total_frame_time_samples[total_frame_time_sample] = total_delta;
-        total_frame_time_sample = (total_frame_time_sample + 1) % ARRLEN(total_frame_time_samples);
+        // Collect frame debug data
+        if (frame.simulation_tick % FPS == 0) {
+            frame_debug.fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
+
+            u32 incoming_data_total_end = 0;
+            u32 outgoing_data_total_end = 0;
+            HashMapForEach(peer_map, struct server_peer, peer) {
+                if (!HashMapExists(peer_map, peer))
+                    continue;
+                incoming_data_total_end += peer->enet_peer->incomingDataTotal;
+                outgoing_data_total_end += peer->enet_peer->outgoingDataTotal;
+            }
+            frame_debug.incoming_bandwidth = FPS * (incoming_data_total_end - frame_debug.incoming_data_total_start);
+            frame_debug.outgoing_bandwidth = FPS * (outgoing_data_total_end - frame_debug.outgoing_data_total_start);
+
+            frame_debug.total_delta = time_current() - frame_debug.total_frame_start;
+        }
 
         if (frame.simulation_tick % NET_PER_SIM_TICKS == 0)
             ++frame.network_tick;

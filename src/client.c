@@ -31,14 +31,6 @@
 bool running = true;
 bool connected = false;
 
-struct frame {
-    u64 desired_delta;
-    u64 delta;
-    u64 simulation_tick;
-    u64 network_tick;
-    f32 dt;
-};
-
 typedef enum MenuState {
     START,
     CONNECTING,
@@ -123,7 +115,6 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                     frame_diff  = {0};
 
     f32 t = 0.0f;
-    f32 fps = 0.0f;
 
     u8 input_count = 0;
     struct input input_buffer[INPUT_BUFFER_LENGTH] = {0};
@@ -148,21 +139,24 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
 
     bool mute = false;
 
-    u64 total_delta = 0;
-
-    u64 total_frame_time_samples[16] = {0};
-    size_t total_frame_time_sample = 0;
-    u64 avg_total_frame_time = 0;
-
-    i64 avg_drift = 0;
+    struct frame_debug_data frame_debug = {0};
 
     while (running) {
         // Begin frame
-        const u64 total_frame_start = time_current();
         const u64 frame_start = time_current();
 
         bool run_network_tick = frame.simulation_tick % NET_PER_SIM_TICKS == 0;
         bool sleep_this_frame = true;
+
+        // Collect frame debug data
+        if (frame.simulation_tick % FPS == 0) {
+            frame_debug.total_frame_start = time_current();
+            // Save incoming data before each frame so we can compute
+            // bandwidth, for somer reason peer->[incoming|outoing]Bandwidth
+            // is always zero.
+            frame_debug.incoming_data_total_start = peer->incomingDataTotal;
+            frame_debug.outgoing_data_total_start = peer->outgoingDataTotal;
+        }
 
         if (adjustment > 0) {
             // If we still have a positive adjustment, don't sleep this
@@ -329,6 +323,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct player *p = NULL;
                             HashMapLookup(game.player_map, kill->player_id, p);
                             p->health = 0.0f;
+                            ListInsert(game.sound_list, ((struct spatial_sound){kill->player_id, SOUND_NADE_EXPLOSION, p->pos}));
                         } break;
 
                         case SERVER_PACKET_DROPPED: {
@@ -461,8 +456,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 struct client_batch_header *batch = (void *) output_buffer.base;
                 batch->net_tick = frame.network_tick;
                 batch->adjustment_iteration = adjustment_iteration;
-                batch->avg_total_frame_time = avg_total_frame_time;
-                ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_RELIABLE);
+                ENetPacket *packet = enet_packet_create(output_buffer.base, size, ENET_PACKET_FLAG_UNSEQUENCED);
                 enet_peer_send(peer, 0, packet);
                 output_buffer.top = output_buffer.base;
 
@@ -484,23 +478,13 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             draw_game(camera, &game, main_player_id, frame.dt, t);
 
             DrawText("client", 10, 10, 20, BLACK);
-            if (frame.simulation_tick % FPS == 0) {
-                f64 geomean = 1.0f;
-                for (size_t i = 0; i < ARRLEN(total_frame_time_samples); ++i) {
-                    geomean *= (f64) total_frame_time_samples[i];
-                }
-                geomean = pow(geomean, 1.0f/((f64) ARRLEN(total_frame_time_samples)));
-                avg_total_frame_time = (u64) geomean;
-                fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
-            }
-            if (!isinf(fps)) {
-                int y = 30;
-                DrawText(TextFormat("fps: %.0f (%.0f)", fps, 1000000000.0f/((f32)total_delta)), 10, y, 20, GRAY); y += 20;
-                DrawText(TextFormat("ping: %u", peer->roundTripTime), 10, y, 20, GRAY); y += 20;
-                DrawText(TextFormat("in  bandwidth: %u bytes/s", peer->incomingBandwidth), 10, y, 20, GRAY); y += 20;
-                DrawText(TextFormat("out bandwidth: %u bytes/s", peer->outgoingBandwidth), 10, y, 20, GRAY); y += 20;
-                DrawText(TextFormat("total adjustment: %d", total_adjustment), 10, y, 20, GRAY); y += 20;
-            }
+
+            int y = 30;
+            DrawText(TextFormat("fps: %.0f (%.0f)", frame_debug.fps, 1000000000.0f/((f32)frame_debug.total_delta)), 10, y, 20, GRAY); y += 20;
+            DrawText(TextFormat("ping: %u", peer->roundTripTime), 10, y, 20, GRAY); y += 20;
+            DrawText(TextFormat("in  bandwidth: %u bytes/s", frame_debug.incoming_bandwidth), 10, y, 20, GRAY); y += 20;
+            DrawText(TextFormat("out bandwidth: %u bytes/s", frame_debug.outgoing_bandwidth), 10, y, 20, GRAY); y += 20;
+            DrawText(TextFormat("total adjustment: %d", total_adjustment), 10, y, 20, GRAY); y += 20;
 
             //graph_append(&graph, v2len(player->velocity));
             draw_all_debug_v2s(camera);
@@ -519,11 +503,14 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
             if (frame.delta < frame.desired_delta) {
                 time_nanosleep(frame.desired_delta - frame.delta);
             }
-            const u64 total_frame_end = time_current();
-            total_delta = total_frame_end - total_frame_start;
 
-            total_frame_time_samples[total_frame_time_sample] = total_delta;
-            total_frame_time_sample = (total_frame_time_sample + 1) % ARRLEN(total_frame_time_samples);
+            // Collect frame debug data
+            if (frame.simulation_tick % FPS == 0) {
+                frame_debug.fps = 1.0f / ((f32) frame.delta / (f32) NANOSECONDS(1));
+                frame_debug.incoming_bandwidth = FPS * (peer->incomingDataTotal - frame_debug.incoming_data_total_start);
+                frame_debug.outgoing_bandwidth = FPS * (peer->outgoingDataTotal - frame_debug.outgoing_data_total_start);
+                frame_debug.total_delta = time_current() - frame_debug.total_frame_start;
+            }
         }
 
         if (run_network_tick)

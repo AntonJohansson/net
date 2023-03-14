@@ -408,6 +408,10 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
 
     // Draw nade blinky lights
     ForEachList(game->nade_list, struct nade_projectile, nade) {
+        // Don't draw lights for other players nades
+        if (nade->player_id_from != main_player_id)
+            continue;
+
         struct player *p;
         HashMapLookup(game->player_map, nade->player_id_from, p);
 
@@ -417,6 +421,7 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
         f32 radius = 0.25f * s*s*s*s;
         draw_dynamic_light(game, LIGHT_MODE_POINT, nade->pos, 0, 0, radius, light);
     }
+
     //for (u8 i = 0; i < MAX_CLIENTS; ++i) {
     //    struct player *player = &game->players[i];
     //    if (!player->occupied || player->health == 0.0f)
@@ -460,13 +465,6 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
 
     draw_map(c, &game->map);
 
-    ForEachList(game->step_list, struct step, s) {
-        const Color dark   = Fade(hsl_to_rgb(HSL(60.0f, 0.5f, 0.2f)), s->time_left/2.0f);
-        const Color darker = Fade(hsl_to_rgb(HSL(60.0f, 0.5f, 0.1f)), s->time_left/2.0f);
-        DrawCircleV(world_to_screen(c, s->pos), world_to_screen_length(c, 0.2f), darker);
-        DrawCircleV(world_to_screen(c, s->pos), world_to_screen_length(c, 0.7f*0.2f), dark);
-    }
-
     DrawRectangle(0,0,resolution.x,resolution.y,(Color){10,10,10,150});
     BeginBlendMode(BLEND_ADDITIVE);
     DrawTextureRec(lightmap.texture, (Rectangle){0,0,lightmap.texture.width,-lightmap.texture.height}, (Vector2){0,0}, WHITE);
@@ -476,6 +474,16 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
     SetShaderValueTexture(final, GetShaderLocation(final, "lightmap"), lightmap.texture);
     SetShaderValue(final, GetShaderLocation(final, "resolution"), &resolution, SHADER_UNIFORM_VEC2);
 
+    ForEachList(game->step_list, struct step, s) {
+        struct player *p;
+        HashMapLookup(game->player_map, s->player_id_from, p);
+
+        const Color dark   = Fade(hsl_to_rgb(HSL(p->hue, 0.5f, 0.2f)), s->time_left/2.0f);
+        const Color darker = Fade(hsl_to_rgb(HSL(p->hue, 0.5f, 0.1f)), s->time_left/2.0f);
+        DrawCircleV(world_to_screen(c, s->pos), world_to_screen_length(c, 0.2f), darker);
+        DrawCircleV(world_to_screen(c, s->pos), world_to_screen_length(c, 0.7f*0.2f), dark);
+    }
+
     HashMapForEach(game->player_map, struct player, p) {
         if (!HashMapExists(game->player_map, p))
             continue;
@@ -483,8 +491,6 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
             continue;
         draw_player(c, p);
     }
-
-    EndShaderMode();
 
     ForEachList(game->nade_list, struct nade_projectile, nade) {
         struct player *p;
@@ -523,9 +529,12 @@ void draw_game(struct camera c, struct game *game, PlayerId main_player_id, cons
         DrawCircle(end.x, end.y, radius, dark);
     }
 
+    EndShaderMode();
+
     if (main_player->health > 0.0f)
         draw_player(c, main_player);
 
+    // Draw crosshair
     {
         const i32 x = GetMouseX();
         const i32 y = GetMouseY();

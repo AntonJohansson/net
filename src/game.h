@@ -275,6 +275,31 @@ static inline PlayerId player_id() {
         map.occupied[index] = HASH_MAP_INVALID_HASH;                    \
         --map.num_items;                                                \
     } while (0)
+//
+// Frame stuff
+//
+
+struct frame {
+    u64 desired_delta;
+    u64 delta;
+    u64 simulation_tick;
+    u64 network_tick;
+    f32 dt;
+};
+
+//
+// Debug
+//
+
+struct frame_debug_data {
+    u32 incoming_data_total_start;
+    u32 outgoing_data_total_start;
+    u32 incoming_bandwidth;
+    u32 outgoing_bandwidth;
+    f32 fps;
+    u64 total_frame_start;
+    u64 total_delta;
+};
 
 //
 // Game
