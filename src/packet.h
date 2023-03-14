@@ -15,6 +15,8 @@ enum server_packet_type {
     SERVER_PACKET_PLAYER_SPAWN,
     SERVER_PACKET_HITSCAN,
     SERVER_PACKET_NADE,
+    SERVER_PACKET_SOUND,
+    SERVER_PACKET_STEP,
 };
 
 enum client_packet_type {
@@ -83,6 +85,14 @@ Pack(struct server_packet_hitscan {
 
 Pack(struct server_packet_nade {
     struct nade_projectile nade;
+});
+
+Pack(struct server_packet_sound {
+    struct spatial_sound sound;
+});
+
+Pack(struct server_packet_step {
+    struct step step;
 });
 
 Pack(struct client_packet_update {

@@ -72,7 +72,7 @@ static inline f32 f32_clamp(f32 x, f32 a, f32 b) {
 static u64 win32_frequency = 0;
 #endif
 
-#define TIME_USE_SLEEP
+//#define TIME_USE_SLEEP
 
 static inline void time_init() {
 #if defined(_WIN32)

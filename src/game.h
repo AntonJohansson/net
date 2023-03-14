@@ -287,11 +287,13 @@ static inline PlayerId player_id() {
 #define MAX_STEPS 128
 
 struct spatial_sound {
+    PlayerId player_id_from;
     enum sound sound;
     v2 pos;
 };
 
 struct step {
+    PlayerId player_id_from;
     v2 pos;
     f32 time_left;
 };

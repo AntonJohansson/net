@@ -255,6 +255,25 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             }
                         } break;
 
+                        case SERVER_PACKET_SOUND: {
+                            struct server_packet_sound *sound_packet;
+                            POP(&net_input_buffer, &sound_packet);
+                            // Skip nades we've already taken care of locally
+                            if (sound_packet->sound.player_id_from != main_player_id) {
+                                ListInsert(game.sound_list, sound_packet->sound);
+                            }
+                        } break;
+
+                        case SERVER_PACKET_STEP: {
+                            struct server_packet_step *step_packet;
+                            POP(&net_input_buffer, &step_packet);
+                            // Skip nades we've already taken care of locally
+                            if (step_packet->step.player_id_from != main_player_id) {
+                                ListInsert(game.step_list, step_packet->step);
+                            }
+                        } break;
+
+
                         case SERVER_PACKET_HITSCAN: {
                             struct server_packet_hitscan *hitscan_packet;
                             POP(&net_input_buffer, &hitscan_packet);

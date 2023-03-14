@@ -357,9 +357,6 @@ int main() {
                 update_player(&game, player, &input, frame.dt);
                 collect_and_resolve_static_collisions(&game);
 
-                // We don't care about sound
-                ListClear(game.sound_list);
-
                 // Send AUTH packet to peer
                 {
                     struct server_header response_header = {
@@ -441,12 +438,15 @@ int main() {
         }
         ListRemoveTaggedItems(respawn_list);
 
-
+        // TODO(anjo): We can always send all new nades in a single packet
+        // instead of as separate packets
+        //
+        // @OPTIMIZATION
         ForEachList(game.new_nade_list, struct nade_projectile, nade) {
             struct player *p = NULL;
             HashMapLookup(game.player_map, nade->player_id_from, p);
 
-            // Loop over all connected peers and send kill packet
+            // Loop over all connected peers and send nade packet
             HashMapForEach(peer_map, struct server_peer, other_peer) {
                 if (!HashMapExists(peer_map, other_peer) || other_peer->id == p->id)
                     continue;
@@ -467,11 +467,15 @@ int main() {
             }
         }
 
+        // TODO(anjo): We can always send all new hitscans in a single packet
+        // instead of as separate packets
+        //
+        // @OPTIMIZATION
         ForEachList(game.new_hitscan_list, struct hitscan_projectile, hitscan) {
             struct player *p = NULL;
             HashMapLookup(game.player_map, hitscan->player_id_from, p);
 
-            // Loop over all connected peers and send kill packet
+            // Loop over all connected peers and send hitscan packet
             HashMapForEach(peer_map, struct server_peer, other_peer) {
                 if (!HashMapExists(peer_map, other_peer) || other_peer->id == p->id)
                     continue;
@@ -494,8 +498,73 @@ int main() {
         ListClear(game.new_nade_list);
         ListClear(game.new_hitscan_list);
 
+        // TODO(anjo): We can always send all new sounds in a single packet
+        // instead of as separate packets
+        //
+        // @OPTIMIZATION
+        ForEachList(game.sound_list, struct spatial_sound, sound) {
+            struct player *p = NULL;
+            HashMapLookup(game.player_map, sound->player_id_from, p);
+
+            // Loop over all connected peers and send hitscan packet
+            HashMapForEach(peer_map, struct server_peer, other_peer) {
+                if (!HashMapExists(peer_map, other_peer) || other_peer->id == p->id)
+                    continue;
+
+                {
+                    struct server_header header = {
+                        .type = SERVER_PACKET_SOUND,
+                    };
+
+                    struct server_packet_sound sound_packet = {
+                        .sound = *sound,
+                    };
+
+                    new_packet(other_peer);
+                    APPEND(&other_peer->output_buffer, &header);
+                    APPEND(&other_peer->output_buffer, &sound_packet);
+                }
+            }
+        }
+        ListClear(game.sound_list);
+
+        // TODO(anjo): We can always send all new steps in a single packet
+        // instead of as separate packets
+        //
+        // @OPTIMIZATION
+        ForEachList(game.step_list, struct step, step) {
+            struct player *p = NULL;
+            HashMapLookup(game.player_map, step->player_id_from, p);
+
+            // Loop over all connected peers and send hitscan packet
+            HashMapForEach(peer_map, struct server_peer, other_peer) {
+                if (!HashMapExists(peer_map, other_peer) || other_peer->id == p->id)
+                    continue;
+
+                {
+                    struct server_header header = {
+                        .type = SERVER_PACKET_STEP,
+                    };
+
+                    struct server_packet_step step_packet = {
+                        .step = *step,
+                    };
+
+                    new_packet(other_peer);
+                    APPEND(&other_peer->output_buffer, &header);
+                    APPEND(&other_peer->output_buffer, &step_packet);
+                }
+            }
+        }
+        // We don't care about keeping track of "alive" steps, only which steps
+        // occured this frame, so clear the list.
+        ListClear(game.step_list);
+
         // Now it's time for per-frame updates
         update_projectiles(&game, frame.dt);
+        // We don't care about sounds made in update_projectiles as these
+        // are already handled by peers as we sync projectiles
+        ListClear(game.sound_list);
 
         // Apply damage
         ForEachList(game.damage_list, struct damage_entry, d) {

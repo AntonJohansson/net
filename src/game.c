@@ -101,7 +101,7 @@ void update_player(struct game *game, struct player *p, struct input *input, con
     // Shoot state
     if (input->active[INPUT_SWITCH_WEAPON]) {
         p->current_weapon = (p->current_weapon + 1) % ARRLEN(p->weapons);
-        ListInsert(game->sound_list, ((struct spatial_sound){SOUND_WEAPON_SWITCH, p->pos}));
+        ListInsert(game->sound_list, ((struct spatial_sound){p->id, SOUND_WEAPON_SWITCH, p->pos}));
     }
 
     if (p->weapons[p->current_weapon] == PLAYER_WEAPON_SNIPER && input->active[INPUT_ZOOM]) {
@@ -199,8 +199,8 @@ void update_player(struct game *game, struct player *p, struct input *input, con
                 f32 step_offset = 0.25f * ((p->step_left_side) ? 1.0f : -1.0f);
                 v2 orthogonal_dir = {-p->look.y, p->look.x};
                 v2 pos = v2add(p->pos, v2scale(step_offset, orthogonal_dir));
-                ListInsert(game->sound_list, ((struct spatial_sound){SOUND_STEP, pos}));
-                ListInsert(game->step_list, ((struct step){pos, 5.0f}));
+                ListInsert(game->sound_list, ((struct spatial_sound){p->id, SOUND_STEP, pos}));
+                ListInsert(game->step_list, ((struct step){p->id, pos, 5.0f}));
                 p->step_left_side = !p->step_left_side;
             }
         } else {
@@ -225,7 +225,7 @@ void update_projectiles(struct game *game, const f32 dt) {
     ForEachList(game->hitscan_list, struct hitscan_projectile, hitscan) {
         // Emit sounds if the projectile is new
         if (f32_equal(hitscan->time_left, sniper_trail_time)) {
-            ListInsert(game->sound_list, ((struct spatial_sound){SOUND_SNIPER_FIRE, hitscan->pos}));
+            ListInsert(game->sound_list, ((struct spatial_sound){hitscan->player_id_from, SOUND_SNIPER_FIRE, hitscan->pos}));
         }
 
         // update timer
@@ -266,17 +266,17 @@ void update_projectiles(struct game *game, const f32 dt) {
             nade->impact = res.impact;
             nade->impact_distance = res.distance;
 
-            ListInsert(game->sound_list, ((struct spatial_sound){SOUND_NADE_DOINK, nade->pos}));
+            ListInsert(game->sound_list, ((struct spatial_sound){nade->player_id_from, SOUND_NADE_DOINK, nade->pos}));
         }
 
         nade->time_left -= dt;
         if ((u32)(nade->time_left / dt) % 64 == 0)
-            ListInsert(game->sound_list, ((struct spatial_sound){SOUND_NADE_BEEP, nade->pos}));
+            ListInsert(game->sound_list, ((struct spatial_sound){nade->player_id_from, SOUND_NADE_BEEP, nade->pos}));
 
         if (nade->time_left < 0.0f) {
             nade->time_left = 0.0f;
 
-            ListInsert(game->sound_list, ((struct spatial_sound){SOUND_NADE_EXPLOSION, nade->pos}));
+            ListInsert(game->sound_list, ((struct spatial_sound){nade->player_id_from, SOUND_NADE_EXPLOSION, nade->pos}));
 
             // Explode on time out
             struct explosion e = {
