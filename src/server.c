@@ -226,9 +226,9 @@ int main() {
                     break;
                 }
                 case ENET_EVENT_TYPE_RECEIVE: {
-                    struct byte_buffer input_buffer = byte_buffer_init(event.packet->data, event.packet->dataLength);
+                    struct byte_buffer net_input_buffer = byte_buffer_init(event.packet->data, event.packet->dataLength);
                     struct client_batch_header *batch;
-                    POP(&input_buffer, &batch);
+                    POP(&net_input_buffer, &batch);
 
                     const PlayerId id = *(PlayerId *)event.peer->data;
 
@@ -238,7 +238,7 @@ int main() {
                     peer->avg_drift = avg_total_frame_time - batch->avg_total_frame_time;
 
                     assert(batch->num_packets > 0);
-                    i64 tick = (i64) ((struct client_header *) input_buffer.top)->sim_tick;
+                    i64 tick = (i64) ((struct client_header *) net_input_buffer.top)->sim_tick;
 
                     i8 adjustment = 0;
                     i64 diff = (i64) frame.simulation_tick + (VALID_TICK_WINDOW-1) - tick;
@@ -280,12 +280,12 @@ int main() {
 
                     for (u16 packet = 0; packet < batch->num_packets; ++packet) {
                         struct client_header *header;
-                        POP(&input_buffer, &header);
+                        POP(&net_input_buffer, &header);
 
                         switch (header->type) {
                         case CLIENT_PACKET_UPDATE: {
                             struct client_packet_update *input_update;
-                            POP(&input_buffer, &input_update);
+                            POP(&net_input_buffer, &input_update);
 
                             struct update_log_entry entry = {
                                 .client_sim_tick = header->sim_tick,

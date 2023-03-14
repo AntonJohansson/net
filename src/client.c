@@ -164,16 +164,9 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
         bool run_network_tick = frame.simulation_tick % NET_PER_SIM_TICKS == 0;
         bool sleep_this_frame = true;
 
-        if (adjustment < 0) {
-            //printf("We are ahead, sleeping %d\n", frame.desired_delta);
-            //time_nanosleep(2*NET_PER_SIM_TICKS*(-adjustment)*frame.desired_delta);
-            //u64 after = time_current();
-            //printf("%u vs %u\n", before, after);
-            //adjustment = 0;
-            //time_nanosleep(frame.desired_delta);
-            //++adjustment;
-        } else if (adjustment > 0) {
-            //printf("We are behind!\n");
+        if (adjustment > 0) {
+            // If we still have a positive adjustment, don't sleep this
+            // frame.
             sleep_this_frame = false;
             --adjustment;
         }
@@ -184,52 +177,39 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 switch (event.type) {
                 case ENET_EVENT_TYPE_RECEIVE: {
                     // Packet batch header
-                    const u8 *p = event.packet->data;
-                    struct server_batch_header *batch = (struct server_batch_header *) p;
-                    p += sizeof(struct server_batch_header);
-
-                    avg_drift = batch->avg_drift;
-
-                    //if (avg_drift < 100000 && avg_drift > -100000){
-                    //    printf("avg_drift: %lld\n", avg_drift);
-
-                    //    i64 delta = avg_drift + NANOSECONDS(1) / (f32) FPS;
-                    //    if (delta > 0)
-                    //        frame.desired_delta = delta;
-                    //    else
-                    //        frame.desired_delta = NANOSECONDS(1) / (f32) FPS;
-                    //}
+                    struct byte_buffer net_input_buffer = byte_buffer_init(event.packet->data, event.packet->dataLength);
+                    struct server_batch_header *batch;
+                    POP(&net_input_buffer, &batch);
 
                     if (batch->adjustment != 0 && adjustment_iteration == batch->adjustment_iteration) {
                         printf("We have %d adjustment (%u)\n", batch->adjustment, adjustment_iteration);
                         adjustment = batch->adjustment;
                         total_adjustment += adjustment;
 
-
                         ++adjustment_iteration;
 
                         if (adjustment < 0) {
-                            //u64 before = time_current();
+                            // If we have a negative adjustment, we're ahead of the server and can deal
+                            // with this immediately by just sleeping for the amount we're ahead.
                             time_nanosleep((-adjustment)*frame.desired_delta);
-                            //u64 after = time_current();
-                            //printf("%u vs %u\n", after-before, (-adjustment)*frame.desired_delta);
-                            //++adjustment;
                             adjustment = 0;
                         } else if (adjustment > 0) {
+                            // If we have a positive adjustment we're behind, so
+                            // disable sleeping for this frame
                             sleep_this_frame = false;
                             --adjustment;
                         }
                     }
 
                     for (u16 packet = 0; packet < batch->num_packets; ++packet) {
-                        struct server_header *header = (struct server_header *) p;
-                        p += sizeof(struct server_header);
+                        struct server_header *header;
+                        POP(&net_input_buffer, &header);
 
                         // Packet payload
                         switch (header->type) {
                         case SERVER_PACKET_GREETING: {
-                            struct server_packet_greeting *greeting = (struct server_packet_greeting *) p;
-                            p += sizeof(struct server_packet_greeting);
+                            struct server_packet_greeting *greeting;
+                            POP(&net_input_buffer, &greeting);
 
                             frame.network_tick = greeting->initial_net_tick + initial_server_net_tick_offset;
                             frame.simulation_tick = frame.network_tick * NET_PER_SIM_TICKS;
@@ -246,8 +226,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         } break;
 
                         case SERVER_PACKET_PEER_GREETING: {
-                            struct server_packet_peer_greeting *greeting = (struct server_packet_peer_greeting *) p;
-                            p += sizeof(struct server_packet_peer_greeting);
+                            struct server_packet_peer_greeting *greeting;
+                            POP(&net_input_buffer, &greeting);
 
                             struct player *player = NULL;
                             HashMapInsert(game.player_map, greeting->id, player);
@@ -258,8 +238,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         } break;
 
                         case SERVER_PACKET_PLAYER_SPAWN: {
-                            struct server_packet_player_spawn *spawn = (struct server_packet_player_spawn *) p;
-                            p += sizeof(struct server_packet_player_spawn);
+                            struct server_packet_player_spawn *spawn;
+                            POP(&net_input_buffer, &spawn);
 
                             struct player *player = NULL;
                             HashMapLookup(game.player_map, spawn->player.id, player);
@@ -267,20 +247,26 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         } break;
 
                         case SERVER_PACKET_NADE: {
-                            struct server_packet_nade *nade_packet = (struct server_packet_nade *) p;
-                            p += sizeof(struct server_packet_nade);
-                            ListInsert(game.nade_list, nade_packet->nade);
+                            struct server_packet_nade *nade_packet;
+                            POP(&net_input_buffer, &nade_packet);
+                            // Skip nades we've already taken care of locally
+                            if (nade_packet->nade.player_id_from != main_player_id) {
+                                ListInsert(game.nade_list, nade_packet->nade);
+                            }
                         } break;
 
                         case SERVER_PACKET_HITSCAN: {
-                            struct server_packet_hitscan *hitscan_packet = (struct server_packet_hitscan *) p;
-                            p += sizeof(struct server_packet_hitscan);
-                            ListInsert(game.hitscan_list, hitscan_packet->hitscan);
+                            struct server_packet_hitscan *hitscan_packet;
+                            POP(&net_input_buffer, &hitscan_packet);
+                            // Skip hitscans we've already taken care of locally
+                            if (hitscan_packet->hitscan.player_id_from != main_player_id) {
+                                ListInsert(game.hitscan_list, hitscan_packet->hitscan);
+                            }
                         } break;
 
                         case SERVER_PACKET_AUTH: {
-                            struct server_packet_auth *auth = (struct server_packet_auth *) p;
-                            p += sizeof(struct server_packet_auth);
+                            struct server_packet_auth *auth;
+                            POP(&net_input_buffer, &auth);
 
                             assert(auth->sim_tick <= frame.simulation_tick);
                             u64 diff = frame.simulation_tick - auth->sim_tick - 1;
@@ -308,8 +294,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         } break;
 
                         case SERVER_PACKET_PEER_AUTH: {
-                            struct server_packet_peer_auth *peer_auth = (struct server_packet_peer_auth *) p;
-                            p += sizeof(struct server_packet_peer_auth);
+                            struct server_packet_peer_auth *peer_auth;
+                            POP(&net_input_buffer, &peer_auth);
 
                             struct client_peer *peer = NULL;
                             HashMapLookup(peer_map, peer_auth->player.id, peer);
@@ -318,8 +304,8 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         } break;
 
                         case SERVER_PACKET_PLAYER_KILL: {
-                            struct server_packet_player_kill *kill = (struct server_packet_player_kill *) p;
-                            p += sizeof(struct server_packet_player_kill);
+                            struct server_packet_player_kill *kill;
+                            POP(&net_input_buffer, &kill);
 
                             struct player *p = NULL;
                             HashMapLookup(game.player_map, kill->player_id, p);
@@ -331,13 +317,14 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                         } break;
 
                         case SERVER_PACKET_PEER_DISCONNECTED: {
-                            struct server_packet_peer_disconnected *disc = (struct server_packet_peer_disconnected *) p;
-                            p += sizeof(struct server_packet_peer_disconnected);
+                            struct server_packet_peer_disconnected *disc;
+                            POP(&net_input_buffer, &disc);
 
                             printf("%d disconnected!\n", disc->player_id);
                             HashMapRemove(game.player_map, disc->player_id);
                             HashMapRemove(peer_map, disc->player_id);
                         } break;
+
                         default:
                             printf("Received unknown packet type %d\n", header->type);
                         }
@@ -358,6 +345,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                 case ENET_EVENT_TYPE_NONE:
                     break;
                 }
+
                 enet_packet_destroy(event.packet);
             }
         }
