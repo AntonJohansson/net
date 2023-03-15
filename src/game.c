@@ -91,6 +91,7 @@ void update_player(struct game *game, struct player *p, struct input *input, con
         p->dodge = p->look;
         p->time_left_in_dodge = dodge_time;
         p->state = PLAYER_STATE_SLIDING;
+        ListInsert(game->sound_list, ((struct spatial_sound){p->id, SOUND_PLAYER_SLIDE, p->pos}));
 
         // If we have a velocity in any other direction than the dodge dir,
         // redirect it in the dodge dir

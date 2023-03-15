@@ -32,7 +32,7 @@ static inline const Vector2 get_scale() {
     return (Vector2) {scale_x, scale_y};
 }
 
-static inline Vector2 world_to_screen(struct camera c, v2 v) {
+Vector2 world_to_screen(struct camera c, v2 v) {
     const f32 width  = (f32) GetRenderWidth();
     const f32 height = (f32) GetRenderHeight();
     Vector2 scale = get_scale();

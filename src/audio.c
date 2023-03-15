@@ -11,6 +11,8 @@ static f32 sound_base_volume[SOUND_COUNT] = {
     [SOUND_WEAPON_SWITCH]       = 0.25f,
     [SOUND_NADE_BEEP]           = 0.25f,
     [SOUND_NADE_DOINK]          = 0.9f,
+    [SOUND_PLAYER_KILL]         = 0.9f,
+    [SOUND_PLAYER_SLIDE]        = 0.9f,
 };
 
 void audio_init() {
@@ -22,6 +24,8 @@ void audio_init() {
     sound_map[SOUND_WEAPON_SWITCH] = LoadSound("res/switch.ogg");
     sound_map[SOUND_NADE_BEEP] = LoadSound("res/pip.ogg");
     sound_map[SOUND_NADE_DOINK] = LoadSound("res/doink.ogg");
+    sound_map[SOUND_PLAYER_KILL] = LoadSound("res/kill.ogg");
+    sound_map[SOUND_PLAYER_SLIDE] = LoadSound("res/slide.ogg");
 }
 
 void audio_deinit() {

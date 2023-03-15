@@ -323,7 +323,7 @@ static void game(ENetHost *client, ENetPeer *peer, struct byte_buffer output_buf
                             struct player *p = NULL;
                             HashMapLookup(game.player_map, kill->player_id, p);
                             p->health = 0.0f;
-                            ListInsert(game.sound_list, ((struct spatial_sound){kill->player_id, SOUND_NADE_EXPLOSION, p->pos}));
+                            ListInsert(game.sound_list, ((struct spatial_sound){kill->player_id, SOUND_PLAYER_KILL, p->pos}));
                         } break;
 
                         case SERVER_PACKET_DROPPED: {

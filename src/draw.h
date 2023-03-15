@@ -51,6 +51,7 @@ void draw_init();
 void draw_deinit();
 
 v2 screen_to_world(struct camera c, Vector2 v);
+Vector2 world_to_screen(struct camera c, v2 v);
 
 void debug_v2(v2 pos, v2 v, f32 scale, Color color);
 void draw_all_debug_v2s(struct camera c);
