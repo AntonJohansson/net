@@ -23,7 +23,9 @@ static inline void fire_nade_projectile(struct game *game, struct player *shoote
     };
 
     ListInsert(game->nade_list, nade);
+#if !defined(CLIENT)
     ListInsert(game->new_nade_list, nade);
+#endif
 }
 
 static inline void fire_hitscan_projectile(struct game *game, struct player *shooter) {
@@ -40,7 +42,9 @@ static inline void fire_hitscan_projectile(struct game *game, struct player *sho
         .time_left = sniper_trail_time,
     };
     ListInsert(game->hitscan_list, hitscan);
+#if !defined(CLIENT)
     ListInsert(game->new_hitscan_list, hitscan);
+#endif
 
     // Simplifty conditions?
     // @OPTIMIZE

@@ -414,7 +414,7 @@ int main() {
                 randomize_player_spawn(&random, game.map, p);
                 p->weapons[0] = PLAYER_WEAPON_SNIPER;
                 p->weapons[1] = PLAYER_WEAPON_NADE;
-                p->hue = 20.0f + 80.0f*random_next_unilateral(&random);
+                p->hue = 20.0f + 80.0f*p->id;
                 p->health = 100.0f;
 
                 struct server_peer *peer = NULL;
