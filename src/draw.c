@@ -26,7 +26,7 @@ int cone_length_loc;
 static inline const Vector2 get_scale() {
     const f32 width  = (f32) GetRenderWidth();
     const f32 height = (f32) GetRenderHeight();
-    const f32 tile_size = 30.0f;
+    const f32 tile_size = 16.0f;
     const f32 scale_x = tile_size * ((width > height) ? (width/height) : 1.0f);
     const f32 scale_y = tile_size * ((width > height) ? 1.0f : (height/width));
     return (Vector2) {scale_x, scale_y};
