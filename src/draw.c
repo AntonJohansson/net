@@ -269,14 +269,14 @@ void draw_player(struct camera c, struct player *p) {
                     DrawLineEx(world_to_screen(c, p->pos),
                                world_to_screen(c, sniper_end),
                                world_to_screen_length(c, 0.1f),
-                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_cooldown-cooldown))));
+                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_sniper_cooldown-cooldown))));
                 } else {
                     v2 sniper_start = v2add(v2add(p->pos, v2scale(0.40f, ortho_dir)), v2scale(-0.25f, p->look));
                     v2 sniper_end = v2add(sniper_start, v2scale(-0.8f, ortho_dir));
                     DrawLineEx(world_to_screen(c, sniper_start),
                                world_to_screen(c, sniper_end),
                                world_to_screen_length(c, 0.1f),
-                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_cooldown-cooldown))));
+                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_sniper_cooldown-cooldown))));
                 }
             } break;
 
@@ -286,14 +286,14 @@ void draw_player(struct camera c, struct player *p) {
                     DrawLineEx(world_to_screen(c, p->pos),
                                world_to_screen(c, nade_dist_end),
                                world_to_screen_length(c, 0.1f),
-                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_cooldown-cooldown))));
+                               hsl_to_rgb(HSL(p->hue, 0.5f, 0.3f*(weapon_nade_cooldown-cooldown))));
 
-                    const f32 nade_radius = 0.125f * (weapon_cooldown - cooldown);
+                    const f32 nade_radius = 0.125f * (weapon_nade_cooldown - cooldown);
                     Vector2 nade_pos = world_to_screen(c, v2add(p->pos, v2scale(0.25f+0.125f, p->look)));
                     DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, nade_radius), light);
                     DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, 0.7f*nade_radius), dark);
                 } else {
-                    const f32 nade_radius = 0.125f * (weapon_cooldown - cooldown);
+                    const f32 nade_radius = 0.125f * (weapon_nade_cooldown - cooldown);
                     Vector2 nade_pos = world_to_screen(c, v2add(p->pos, v2scale(-0.25f-0.125f, p->look)));
                     DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, nade_radius), light);
                     DrawCircle(nade_pos.x, nade_pos.y, world_to_screen_length(c, 0.7f*nade_radius), dark);

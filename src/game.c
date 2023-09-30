@@ -122,7 +122,7 @@ void update_player(struct game *game, struct player *p, struct input *input, con
     bool can_fire = p->time_left_in_weapon_cooldown[p->current_weapon] <= 0.0f;
 
     if (can_fire && p->weapons[p->current_weapon] == PLAYER_WEAPON_SNIPER && input->active[INPUT_SHOOT_PRESSED]) {
-        p->time_left_in_weapon_cooldown[p->current_weapon] = weapon_cooldown;
+        p->time_left_in_weapon_cooldown[p->current_weapon] = weapon_sniper_cooldown;
         fire_hitscan_projectile(game, p);
     }
 
@@ -133,7 +133,7 @@ void update_player(struct game *game, struct player *p, struct input *input, con
     }
 
     if (can_fire && p->weapons[p->current_weapon] == PLAYER_WEAPON_NADE && input->active[INPUT_SHOOT_RELEASED]) {
-        p->time_left_in_weapon_cooldown[p->current_weapon] = weapon_cooldown;
+        p->time_left_in_weapon_cooldown[p->current_weapon] = weapon_nade_cooldown;
         fire_nade_projectile(game, p);
         p->nade_distance = 0.0f;
     }

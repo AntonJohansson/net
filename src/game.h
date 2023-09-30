@@ -20,7 +20,8 @@ static const f32 max_dodge_speed = 10.0f;
 static const f32 dodge_time = 0.20f;
 static const f32 dodge_delay_time = 1.0f;
 
-static const f32 weapon_cooldown = 1.0f;
+static const f32 weapon_sniper_cooldown = 1.0f;
+static const f32 weapon_nade_cooldown = 3.0f;
 
 static const f32 sniper_trail_time = 1.0f;
 
@@ -124,6 +125,7 @@ struct map {
 };
 
 static struct map map = {
+#if 0
     .data = (const u8 *) "################"
                          "#              #"
                          "#              #"
@@ -142,6 +144,20 @@ static struct map map = {
                          "################",
     .width = 16,
     .height = 16,
+#elif 1
+     .data = (const u8 *)
+" ########################## "
+" #                        # "
+" #  ####################  # "
+" #  #                  #  # "
+" #  ####            ####  # "
+" #                        # "
+" #  ####################  # "
+"#                          #"
+" ########################## ",
+    .width = 28,
+    .height = 9,
+#endif
     .tile_size = 1.0f,
     .origin = {0, 0},
 };
